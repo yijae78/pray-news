@@ -110,13 +110,15 @@ export default function App() {
   const prayerRef = useRef<HTMLDivElement>(null);
   const [installPrompt, setInstallPrompt] = useState<any>(null);
   const [showInstallBanner, setShowInstallBanner] = useState(false);
+  const [showIosGuide, setShowIosGuide] = useState(false);
+  const isStandalone = typeof window !== 'undefined' && (window.matchMedia('(display-mode: standalone)').matches || (window.navigator as any).standalone === true);
+  const isIos = typeof navigator !== 'undefined' && /iPhone|iPad|iPod/.test(navigator.userAgent);
 
   // PWA 설치 프롬프트 캡처
   useEffect(() => {
     const handler = (e: Event) => {
       e.preventDefault();
       setInstallPrompt(e);
-      // 이전에 닫지 않았으면 배너 표시
       if (!localStorage.getItem('pwa-install-dismissed')) {
         setShowInstallBanner(true);
       }
@@ -126,14 +128,17 @@ export default function App() {
   }, []);
 
   async function handleInstall() {
-    if (!installPrompt) return;
-    installPrompt.prompt();
-    const result = await installPrompt.userChoice;
-    if (result.outcome === 'accepted') {
-      setShowInstallBanner(false);
-      flash('앱이 설치되었습니다!');
+    if (installPrompt) {
+      installPrompt.prompt();
+      const result = await installPrompt.userChoice;
+      if (result.outcome === 'accepted') {
+        setShowInstallBanner(false);
+        flash('앱이 설치되었습니다!');
+      }
+      setInstallPrompt(null);
+    } else if (isIos) {
+      setShowIosGuide(true);
     }
-    setInstallPrompt(null);
   }
 
   function dismissInstall() {
@@ -668,7 +673,7 @@ export default function App() {
               </div>
             </div>
 
-            {/* PWA 설치 배너 */}
+            {/* PWA 자동 설치 배너 */}
             {showInstallBanner && (
               <div className="install-banner">
                 <div className="install-banner-content">
@@ -681,6 +686,40 @@ export default function App() {
                 <div className="install-banner-actions">
                   <button className="install-btn" onClick={handleInstall}>설치하기</button>
                   <button className="install-dismiss" onClick={dismissInstall}>나중에</button>
+                </div>
+              </div>
+            )}
+
+            {/* 하단 고정 앱 설치 버튼 (이미 설치된 경우 숨김) */}
+            {!isStandalone && (
+              <div className="install-fixed">
+                <button className="install-fixed-btn" onClick={handleInstall}>
+                  <Download size={16} />
+                  <span>앱 설치하기</span>
+                </button>
+              </div>
+            )}
+
+            {/* iOS 설치 안내 모달 */}
+            {showIosGuide && (
+              <div className="ios-guide-overlay" onClick={() => setShowIosGuide(false)}>
+                <div className="ios-guide" onClick={e => e.stopPropagation()}>
+                  <h3 className="ios-guide-title">iPhone에서 앱 설치하기</h3>
+                  <div className="ios-guide-steps">
+                    <div className="ios-guide-step">
+                      <span className="ios-guide-num">1</span>
+                      <span>하단의 <strong>공유 버튼</strong> (□↑)을 탭하세요</span>
+                    </div>
+                    <div className="ios-guide-step">
+                      <span className="ios-guide-num">2</span>
+                      <span>스크롤하여 <strong>"홈 화면에 추가"</strong>를 탭하세요</span>
+                    </div>
+                    <div className="ios-guide-step">
+                      <span className="ios-guide-num">3</span>
+                      <span>우측 상단 <strong>"추가"</strong>를 탭하면 완료!</span>
+                    </div>
+                  </div>
+                  <button className="ios-guide-close" onClick={() => setShowIosGuide(false)}>확인</button>
                 </div>
               </div>
             )}
@@ -1178,6 +1217,56 @@ const GLOBAL_CSS = `
   background:none;color:rgba(255,255,255,.5);font-size:.82rem;cursor:pointer;transition:all .2s;
 }
 .install-dismiss:hover{background:rgba(255,255,255,.05);color:rgba(255,255,255,.7)}
+
+/* 하단 고정 앱 설치 버튼 */
+.install-fixed{
+  position:relative;z-index:2;text-align:center;margin-top:20px;
+  animation:fadeUp .8s ease .85s both;
+}
+.install-fixed-btn{
+  display:inline-flex;align-items:center;gap:8px;
+  padding:10px 28px;border-radius:50px;border:1.5px solid rgba(59,130,246,.25);
+  background:rgba(30,64,175,.08);backdrop-filter:blur(8px);
+  color:rgba(147,197,253,.85);font-size:.85rem;font-weight:600;
+  cursor:pointer;transition:all .25s;
+}
+.install-fixed-btn:hover{
+  background:rgba(30,64,175,.15);border-color:rgba(59,130,246,.45);
+  color:#fff;transform:translateY(-2px);
+  box-shadow:0 4px 20px rgba(30,64,175,.25);
+}
+
+/* iOS 설치 안내 모달 */
+.ios-guide-overlay{
+  position:fixed;inset:0;z-index:9999;
+  background:rgba(0,0,0,.65);backdrop-filter:blur(6px);
+  display:flex;align-items:center;justify-content:center;
+  padding:20px;animation:fadeIn .2s ease;
+}
+.ios-guide{
+  background:linear-gradient(135deg,#1a1a2e,#16213e);
+  border:1px solid rgba(59,130,246,.2);border-radius:20px;
+  padding:28px 24px;max-width:340px;width:100%;
+  box-shadow:0 20px 60px rgba(0,0,0,.5);animation:fadeUp .3s ease;
+}
+.ios-guide-title{
+  font-size:1.1rem;font-weight:700;color:#fff;text-align:center;margin-bottom:20px;
+}
+.ios-guide-steps{display:flex;flex-direction:column;gap:14px;margin-bottom:20px}
+.ios-guide-step{display:flex;align-items:flex-start;gap:10px;color:rgba(200,210,230,.85);font-size:.88rem;line-height:1.5}
+.ios-guide-num{
+  width:26px;height:26px;border-radius:50%;flex-shrink:0;
+  background:linear-gradient(135deg,#1E40AF,#3B82F6);color:#fff;
+  font-size:.72rem;font-weight:700;
+  display:flex;align-items:center;justify-content:center;
+}
+.ios-guide-step strong{color:#93c5fd}
+.ios-guide-close{
+  width:100%;min-height:42px;border:none;border-radius:12px;cursor:pointer;
+  background:linear-gradient(135deg,#1E40AF,#3B82F6);color:#fff;
+  font-size:.92rem;font-weight:700;transition:all .2s;
+}
+.ios-guide-close:hover{opacity:.9}
 
 .hero-footer{
   position:absolute;bottom:14px;left:0;right:0;text-align:center;

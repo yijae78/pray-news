@@ -1,0 +1,32 @@
+{
+  "name": "기도로 읽는 뉴스 - AI 분석",
+  "short_name": "기도뉴스",
+  "description": "매일의 기독교 뉴스를 AI가 자동 수집·분석하고 개혁신학 관점의 기도문을 작성해 드립니다",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f0f13",
+  "theme_color": "#0f0f13",
+  "orientation": "portrait-primary",
+  "categories": ["news", "education", "lifestyle"],
+  "lang": "ko",
+  "icons": [
+    {
+      "src": "/icon-192.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-192.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-192.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}

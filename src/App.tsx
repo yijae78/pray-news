@@ -4,7 +4,7 @@ import {
   AlertTriangle, ChevronDown, ChevronUp, RefreshCw, ExternalLink,
   Newspaper, ShieldCheck, Brain, BookOpen, ChevronRight,
   Rss, Cpu, FileText, Menu, X, TrendingUp,
-  Cross, Sparkles, Smartphone, Tablet, Monitor, Home, Zap, Download,
+  Cross, Sparkles, Smartphone, Tablet, Monitor, Home, Zap, Download, Trash2,
 } from 'lucide-react';
 import type { Article, AnalysisResult, AppState, CrawlMeta, CachedReport } from './types';
 import rawDemoData from './demo-data.json';
@@ -82,6 +82,7 @@ const SECTIONS = [
 
 type View = 'landing' | 'result';
 type DeviceMode = 'phone' | 'tablet' | 'desktop';
+type DateMode = 'single' | 'range' | 'month';
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // 앱
@@ -89,6 +90,9 @@ type DeviceMode = 'phone' | 'tablet' | 'desktop';
 
 export default function App() {
   const [date, setDate] = useState(todayKST());
+  const [dateEnd, setDateEnd] = useState(todayKST());
+  const [dateMonth, setDateMonth] = useState(todayKST().slice(0, 7));
+  const [dateMode, setDateMode] = useState<DateMode>('single');
   const [state, setState] = useState<AppState>('idle');
   const [articles, setArticles] = useState<Article[]>([]);
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
@@ -121,27 +125,117 @@ export default function App() {
     setMeta(null); setIsDemo(false); setError(null); setSidebarOpen(false);
   }
 
+  // 날짜 범위 계산
+  function getDateList(): string[] {
+    if (dateMode === 'single') return [date];
+    let start: string, end: string;
+    if (dateMode === 'range') {
+      start = date <= dateEnd ? date : dateEnd;
+      end = date <= dateEnd ? dateEnd : date;
+    } else {
+      start = dateMonth + '-01';
+      const [y, m] = dateMonth.split('-').map(Number);
+      const lastDay = new Date(y, m, 0).getDate();
+      end = dateMonth + '-' + String(lastDay).padStart(2, '0');
+      // 미래 날짜는 오늘까지만
+      if (end > todayKST()) end = todayKST();
+    }
+    const list: string[] = [];
+    const cur = new Date(start + 'T00:00:00');
+    const endD = new Date(end + 'T00:00:00');
+    while (cur <= endD) {
+      list.push(cur.toISOString().slice(0, 10));
+      cur.setDate(cur.getDate() + 1);
+    }
+    return list;
+  }
+
+  function getDateLabel(): string {
+    if (dateMode === 'single') return formatDateKR(date);
+    if (dateMode === 'range') {
+      const s = date <= dateEnd ? date : dateEnd;
+      const e = date <= dateEnd ? dateEnd : date;
+      return `${formatDateKR(s)} ~ ${formatDateKR(e)}`;
+    }
+    const [y, m] = dateMonth.split('-');
+    return `${y}년 ${Number(m)}월`;
+  }
+
   function changeDate(d: string) {
     setDate(d);
-    const c = getCachedReport(d);
-    if (c) { setArticles(c.articles); setAnalysis(c.analysis); setMeta(c.meta); setError(null); setState('done'); setIsDemo(false); setView('result'); }
+    if (dateMode === 'single') {
+      const c = getCachedReport(d);
+      if (c) { setArticles(c.articles); setAnalysis(c.analysis); setMeta(c.meta); setError(null); setState('done'); setIsDemo(false); setView('result'); }
+    }
+  }
+
+  function clearReport() {
+    // 캐시 삭제
+    const dates = getDateList();
+    dates.forEach(d => localStorage.removeItem(`cached-report-${d}`));
+    // 상태 초기화
+    setArticles([]); setAnalysis(null); setMeta(null); setError(null); setState('idle');
+    flash(`${dates.length > 1 ? dates.length + '일분' : formatDateKR(dates[0])} 분석 결과가 삭제되었습니다`);
   }
 
   async function analyze(force = false) {
     if (disabled) return;
-    if (!force) { const c = getCachedReport(date); if (c) { setArticles(c.articles); setAnalysis(c.analysis); setMeta(c.meta); setError(null); setState('done'); setIsDemo(false); setView('result'); return; } }
+    const dates = getDateList();
+    if (dates.length > 31) { setError('최대 31일까지 선택 가능합니다.'); setState('error'); setView('result'); return; }
+
+    // 단일 날짜 캐시 체크
+    if (!force && dates.length === 1) {
+      const c = getCachedReport(dates[0]);
+      if (c) { setArticles(c.articles); setAnalysis(c.analysis); setMeta(c.meta); setError(null); setState('done'); setIsDemo(false); setView('result'); return; }
+    }
+
     setCooldown(true); setTimeout(() => setCooldown(false), 15000);
     setError(null); setIsDemo(false); setView('result'); setState('crawling');
     try {
-      const r1 = await fetch('/api/crawl', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ date }) });
-      if (!r1.ok) { const e = await r1.json().catch(() => ({})); throw new Error(e.error || '뉴스 수집에 실패했습니다.'); }
-      const d1 = await r1.json(); setArticles(d1.articles); setMeta(d1.meta);
-      if (!d1.articles.length) { setError(d1.meta.warning || '해당 날짜에 수집된 뉴스가 없습니다.'); setState('error'); return; }
+      // 모든 날짜에 대해 크롤링
+      const allArticles: Article[] = [];
+      let totalFetched = 0, totalCult = 0, totalDup = 0;
+      const allFailed: string[] = [];
+      let anyPartial = false;
+
+      for (const d of dates) {
+        const r1 = await fetch('/api/crawl', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ date: d }) });
+        if (!r1.ok) continue;
+        const d1 = await r1.json();
+        allArticles.push(...d1.articles);
+        totalFetched += d1.meta.totalFetched;
+        totalCult += d1.meta.filteredCult;
+        totalDup += d1.meta.filteredDuplicate;
+        if (d1.meta.failedFeeds) allFailed.push(...d1.meta.failedFeeds);
+        if (d1.meta.isPartial) anyPartial = true;
+      }
+
+      // 중복 제거 (다른 날짜에서 같은 기사 수집 가능)
+      const seen = new Set<string>();
+      const deduped = allArticles.filter(a => {
+        const key = a.title.slice(0, 30);
+        if (seen.has(key)) return false;
+        seen.add(key); return true;
+      });
+      const finalArticles = deduped.slice(0, 50);
+
+      const combinedMeta: CrawlMeta = {
+        totalFetched, filteredCult: totalCult, filteredDuplicate: totalDup + (deduped.length < allArticles.length ? allArticles.length - deduped.length : 0),
+        finalCount: finalArticles.length, failedFeeds: [...new Set(allFailed)], isPartial: anyPartial,
+      };
+      setArticles(finalArticles); setMeta(combinedMeta);
+
+      if (!finalArticles.length) { setError('해당 기간에 수집된 뉴스가 없습니다.'); setState('error'); return; }
       setState('analyzing');
-      const r2 = await fetch('/api/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ articles: d1.articles, date }) });
+
+      const dateLabel = dates.length === 1 ? dates[0] : `${dates[0]}~${dates[dates.length - 1]}`;
+      const r2 = await fetch('/api/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ articles: finalArticles, date: dateLabel }) });
       if (!r2.ok) { const e = await r2.json().catch(() => ({})); throw new Error(e.error || '분석에 실패했습니다.'); }
       const d2: AnalysisResult = await r2.json();
-      setAnalysis(d2); saveCachedReport(date, d1.articles, d2, d1.meta); setState('done');
+      setAnalysis(d2);
+      // 캐시 저장 (단일 날짜만)
+      if (dates.length === 1) saveCachedReport(dates[0], finalArticles, d2, combinedMeta);
+      setState('done');
     } catch (e) {
       const m = e instanceof Error ? e.message : '알 수 없는 오류';
       setError(m.includes('fetch') || m.includes('Network') ? '인터넷 연결을 확인해주세요.' : m);
@@ -487,12 +581,41 @@ export default function App() {
               <p className="hero-sub">매일의 기독교 뉴스를 AI가 자동 수집·분석하고<br />개혁신학 관점의 기도문을 작성해 드립니다</p>
 
               <div className="hero-actions">
-                <div className="hero-date-wrap">
-                  <Calendar size={20} />
-                  <input type="date" value={date} onChange={e => changeDate(e.target.value)} max="2099-12-31" min="2020-01-01" className="hero-date-input" />
+                {/* 날짜 모드 토글 */}
+                <div className="date-mode-toggle">
+                  <button className={`dmt-btn ${dateMode === 'single' ? 'dmt-btn--active' : ''}`} onClick={() => setDateMode('single')}>하루</button>
+                  <button className={`dmt-btn ${dateMode === 'range' ? 'dmt-btn--active' : ''}`} onClick={() => setDateMode('range')}>기간</button>
+                  <button className={`dmt-btn ${dateMode === 'month' ? 'dmt-btn--active' : ''}`} onClick={() => setDateMode('month')}>월별</button>
                 </div>
+
+                {dateMode === 'single' && (
+                  <div className="hero-date-wrap">
+                    <Calendar size={20} />
+                    <input type="date" value={date} onChange={e => changeDate(e.target.value)} max="2099-12-31" min="2020-01-01" className="hero-date-input" />
+                  </div>
+                )}
+                {dateMode === 'range' && (
+                  <div className="hero-date-range">
+                    <div className="hero-date-wrap">
+                      <Calendar size={18} />
+                      <input type="date" value={date} onChange={e => setDate(e.target.value)} max="2099-12-31" min="2020-01-01" className="hero-date-input" />
+                    </div>
+                    <span className="date-range-sep">~</span>
+                    <div className="hero-date-wrap">
+                      <Calendar size={18} />
+                      <input type="date" value={dateEnd} onChange={e => setDateEnd(e.target.value)} max="2099-12-31" min="2020-01-01" className="hero-date-input" />
+                    </div>
+                  </div>
+                )}
+                {dateMode === 'month' && (
+                  <div className="hero-date-wrap">
+                    <Calendar size={20} />
+                    <input type="month" value={dateMonth} onChange={e => setDateMonth(e.target.value)} max="2099-12" min="2020-01" className="hero-date-input" />
+                  </div>
+                )}
+
                 <button className="btn-hero-primary" onClick={() => analyze()} disabled={disabled}>
-                  <Newspaper size={20} /> 뉴스 분석 시작
+                  <Newspaper size={20} /> {dateMode === 'single' ? '뉴스 분석 시작' : `${getDateList().length}일간 뉴스 분석`}
                 </button>
                 <button className="btn-hero-secondary" onClick={enterDemo}>
                   <BookOpen size={18} /> 샘플 미리보기
@@ -545,7 +668,12 @@ export default function App() {
             </div>
             <div className="appbar-right">
               {isDemo && <span className="appbar-demo-badge">SAMPLE</span>}
-              <span className="appbar-date">{formatDateKR(date)} ({getDayOfWeek(date)})</span>
+              <span className="appbar-date">{dateMode === 'single' ? `${formatDateKR(date)} (${getDayOfWeek(date)})` : getDateLabel()}</span>
+              {state === 'done' && !isDemo && (
+                <button className="appbar-clear-btn" onClick={clearReport} title="결과 삭제">
+                  <Trash2 size={15} />
+                </button>
+              )}
               <button className="appbar-home-btn" onClick={goHome} title="메인으로">
                 <Home size={18} />
               </button>
@@ -560,12 +688,36 @@ export default function App() {
             <aside className={`sidebar ${isPhone ? 'sidebar--phone' : ''} ${isPhone && sidebarOpen ? 'sidebar--open' : ''}`}>
               <div className="sidebar-date-section">
                 <label className="sidebar-label">분석 날짜</label>
-                <div className="sidebar-date-input-wrap">
-                  <Calendar size={14} />
-                  <input type="date" value={date} onChange={e => changeDate(e.target.value)} max="2099-12-31" min="2020-01-01" className="sidebar-date-input" />
+                <div className="sidebar-date-mode">
+                  <button className={`sdm-btn ${dateMode === 'single' ? 'sdm-btn--active' : ''}`} onClick={() => setDateMode('single')}>하루</button>
+                  <button className={`sdm-btn ${dateMode === 'range' ? 'sdm-btn--active' : ''}`} onClick={() => setDateMode('range')}>기간</button>
+                  <button className={`sdm-btn ${dateMode === 'month' ? 'sdm-btn--active' : ''}`} onClick={() => setDateMode('month')}>월별</button>
                 </div>
+                {dateMode === 'single' && (
+                  <div className="sidebar-date-input-wrap">
+                    <Calendar size={14} />
+                    <input type="date" value={date} onChange={e => changeDate(e.target.value)} max="2099-12-31" min="2020-01-01" className="sidebar-date-input" />
+                  </div>
+                )}
+                {dateMode === 'range' && (<>
+                  <div className="sidebar-date-input-wrap">
+                    <Calendar size={14} />
+                    <input type="date" value={date} onChange={e => setDate(e.target.value)} max="2099-12-31" min="2020-01-01" className="sidebar-date-input" />
+                  </div>
+                  <span className="sidebar-range-sep">~</span>
+                  <div className="sidebar-date-input-wrap">
+                    <Calendar size={14} />
+                    <input type="date" value={dateEnd} onChange={e => setDateEnd(e.target.value)} max="2099-12-31" min="2020-01-01" className="sidebar-date-input" />
+                  </div>
+                </>)}
+                {dateMode === 'month' && (
+                  <div className="sidebar-date-input-wrap">
+                    <Calendar size={14} />
+                    <input type="month" value={dateMonth} onChange={e => setDateMonth(e.target.value)} max="2099-12" min="2020-01" className="sidebar-date-input" />
+                  </div>
+                )}
                 <button className="sidebar-analyze-btn" onClick={() => analyze()} disabled={disabled}>
-                  {state === 'crawling' || state === 'analyzing' ? <><Loader2 size={14} className="spin" /> 분석 중...</> : '분석하기'}
+                  {state === 'crawling' || state === 'analyzing' ? <><Loader2 size={14} className="spin" /> 분석 중...</> : dateMode === 'single' ? '분석하기' : `${getDateList().length}일 분석`}
                 </button>
               </div>
 
@@ -637,6 +789,7 @@ export default function App() {
                   {!isDemo && (
                     <div className="refresh-row">
                       <button className="refresh-btn" onClick={() => analyze(true)} disabled={disabled}><RefreshCw size={14} /> 새로 분석</button>
+                      <button className="refresh-btn refresh-btn--del" onClick={clearReport}><Trash2 size={14} /> 결과 삭제</button>
                     </div>
                   )}
                 </div>
@@ -883,6 +1036,23 @@ const GLOBAL_CSS = `
 .hero-sub{font-size:1rem;color:rgba(186,200,220,.75);line-height:1.8;margin-bottom:32px;animation:fadeUp .8s ease .3s both}
 .hero-actions{display:flex;flex-direction:column;gap:12px;align-items:center;max-width:360px;margin:0 auto;animation:fadeUp .8s ease .45s both}
 
+/* Date mode toggle (hero) */
+.date-mode-toggle{
+  display:flex;width:100%;gap:2px;background:rgba(30,64,175,.06);border-radius:var(--radius);padding:3px;
+  border:1px solid rgba(30,64,175,.1);
+}
+.dmt-btn{
+  flex:1;min-height:36px;border:none;border-radius:10px;cursor:pointer;
+  font-size:.82rem;font-weight:600;color:rgba(255,255,255,.4);
+  background:transparent;transition:all .2s;
+}
+.dmt-btn:hover{color:rgba(255,255,255,.6)}
+.dmt-btn--active{background:linear-gradient(135deg,#1E40AF,#3B82F6);color:#fff;box-shadow:0 2px 8px rgba(30,64,175,.3)}
+
+.hero-date-range{display:flex;align-items:center;gap:6px;width:100%}
+.hero-date-range .hero-date-wrap{flex:1}
+.date-range-sep{color:rgba(255,255,255,.4);font-size:1.1rem;font-weight:700;flex-shrink:0}
+
 .hero-date-wrap{
   display:flex;align-items:center;gap:8px;width:100%;
   background:rgba(30,64,175,.05);backdrop-filter:blur(8px);
@@ -956,6 +1126,12 @@ const GLOBAL_CSS = `
 .appbar-right{display:flex;align-items:center;gap:8px}
 .appbar-demo-badge{font-size:.6rem;font-weight:700;color:var(--gold);background:color-mix(in srgb,var(--gold) 15%,transparent);border-radius:20px;padding:2px 8px;letter-spacing:1px}
 .appbar-date{font-size:.75rem;color:rgba(255,255,255,.55)}
+.appbar-clear-btn{
+  background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.2);
+  color:rgba(252,165,165,.9);cursor:pointer;padding:5px 7px;border-radius:8px;
+  display:flex;align-items:center;transition:all .2s;
+}
+.appbar-clear-btn:hover{background:rgba(239,68,68,.25);border-color:rgba(239,68,68,.4)}
 .appbar-home-btn{
   background:rgba(59,130,246,.12);border:1px solid rgba(59,130,246,.2);
   color:rgba(147,197,253,.9);cursor:pointer;padding:5px 7px;border-radius:8px;
@@ -986,6 +1162,16 @@ const GLOBAL_CSS = `
   position:fixed;inset:0;top:50px;background:rgba(0,0,0,.45);
   z-index:25;backdrop-filter:blur(2px);
 }
+
+/* Sidebar date mode */
+.sidebar-date-mode{display:flex;gap:2px;margin-bottom:8px;background:rgba(255,255,255,.03);border-radius:6px;padding:2px}
+.sdm-btn{
+  flex:1;min-height:26px;border:none;border-radius:5px;cursor:pointer;
+  font-size:.68rem;font-weight:600;color:rgba(255,255,255,.3);background:transparent;transition:all .15s;
+}
+.sdm-btn:hover{color:rgba(255,255,255,.5)}
+.sdm-btn--active{background:linear-gradient(135deg,#1E40AF,#3B82F6);color:#fff}
+.sidebar-range-sep{display:block;text-align:center;color:rgba(255,255,255,.25);font-size:.72rem;font-weight:700;margin:2px 0}
 
 .sidebar-date-section{padding:14px;border-bottom:1px solid rgba(255,255,255,.06)}
 .sidebar-label{font-size:.6rem;color:rgba(255,255,255,.3);display:block;margin-bottom:5px;letter-spacing:1px;text-transform:uppercase;font-weight:600}
@@ -1257,12 +1443,13 @@ const GLOBAL_CSS = `
 .td-sent{font-size:.68rem;font-weight:600;white-space:nowrap}
 .td-link{color:var(--navy)}
 
-.refresh-row{text-align:center;padding-top:6px}
+.refresh-row{text-align:center;padding-top:6px;display:flex;justify-content:center;gap:16px}
 .refresh-btn{
   display:inline-flex;align-items:center;gap:4px;font-size:.78rem;color:var(--text-muted);
   background:none;border:none;cursor:pointer;text-decoration:underline;
 }
 .refresh-btn:disabled{opacity:.4;cursor:not-allowed}
+.refresh-btn--del{color:var(--error)}
 
 /* ── FAB ── */
 .fab{

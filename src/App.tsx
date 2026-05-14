@@ -106,7 +106,13 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [catTab, setCatTab] = useState(0);
   const [prayerTab, setPrayerTab] = useState<'personal' | 'communal' | 'wednesday'>('personal');
-  const [deviceMode, setDeviceMode] = useState<DeviceMode>('phone');
+  const [deviceMode, setDeviceMode] = useState<DeviceMode>(() => {
+    if (typeof window === 'undefined') return 'phone';
+    const w = window.innerWidth;
+    if (w >= 1024) return 'desktop';
+    if (w >= 600) return 'tablet';
+    return 'phone';
+  });
   const prayerRef = useRef<HTMLDivElement>(null);
   const [installPrompt, setInstallPrompt] = useState<any>(null);
   const [showInstallBanner, setShowInstallBanner] = useState(false);
@@ -991,7 +997,7 @@ const GLOBAL_CSS = `
    DEVICE VIEWPORT
    ══════════════════════════════ */
 .device-viewport{margin:0 auto;transition:max-width .4s ease}
-.device--phone{max-width:390px}
+.device--phone{max-width:100%}
 .device--tablet{max-width:768px}
 .device--desktop{max-width:100%}
 

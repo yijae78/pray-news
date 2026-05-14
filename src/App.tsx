@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import {
   Calendar, Loader2, Copy, Share2,
   AlertTriangle, ChevronDown, ChevronUp, RefreshCw, ExternalLink,
@@ -108,6 +108,38 @@ export default function App() {
   const [prayerTab, setPrayerTab] = useState<'personal' | 'communal' | 'wednesday'>('personal');
   const [deviceMode, setDeviceMode] = useState<DeviceMode>('phone');
   const prayerRef = useRef<HTMLDivElement>(null);
+  const [installPrompt, setInstallPrompt] = useState<any>(null);
+  const [showInstallBanner, setShowInstallBanner] = useState(false);
+
+  // PWA 설치 프롬프트 캡처
+  useEffect(() => {
+    const handler = (e: Event) => {
+      e.preventDefault();
+      setInstallPrompt(e);
+      // 이전에 닫지 않았으면 배너 표시
+      if (!localStorage.getItem('pwa-install-dismissed')) {
+        setShowInstallBanner(true);
+      }
+    };
+    window.addEventListener('beforeinstallprompt', handler);
+    return () => window.removeEventListener('beforeinstallprompt', handler);
+  }, []);
+
+  async function handleInstall() {
+    if (!installPrompt) return;
+    installPrompt.prompt();
+    const result = await installPrompt.userChoice;
+    if (result.outcome === 'accepted') {
+      setShowInstallBanner(false);
+      flash('앱이 설치되었습니다!');
+    }
+    setInstallPrompt(null);
+  }
+
+  function dismissInstall() {
+    setShowInstallBanner(false);
+    localStorage.setItem('pwa-install-dismissed', '1');
+  }
 
   const canGo = state === 'idle' || state === 'done' || state === 'error';
   const disabled = !canGo || cooldown;
@@ -636,6 +668,23 @@ export default function App() {
               </div>
             </div>
 
+            {/* PWA 설치 배너 */}
+            {showInstallBanner && (
+              <div className="install-banner">
+                <div className="install-banner-content">
+                  <div className="install-banner-icon"><Cross size={24} /></div>
+                  <div className="install-banner-text">
+                    <strong>기도뉴스 앱 설치</strong>
+                    <span>홈 화면에 추가하고 앱처럼 사용하세요</span>
+                  </div>
+                </div>
+                <div className="install-banner-actions">
+                  <button className="install-btn" onClick={handleInstall}>설치하기</button>
+                  <button className="install-dismiss" onClick={dismissInstall}>나중에</button>
+                </div>
+              </div>
+            )}
+
             <footer className="hero-footer">
               <p>2026 기도로 읽는 뉴스 · Developed by Yijae Shin</p>
             </footer>
@@ -1099,6 +1148,36 @@ const GLOBAL_CSS = `
   color:rgba(147,180,220,.55);font-size:.75rem;font-weight:500;
 }
 .hero-step-arrow{color:rgba(30,64,175,.2);flex-shrink:0}
+
+/* PWA Install Banner */
+.install-banner{
+  position:relative;z-index:2;max-width:380px;margin:24px auto 0;
+  background:rgba(30,64,175,.12);backdrop-filter:blur(16px);
+  border:1.5px solid rgba(59,130,246,.25);border-radius:var(--radius);
+  padding:16px;animation:fadeUp .5s ease both;
+}
+.install-banner-content{display:flex;align-items:center;gap:12px;margin-bottom:12px}
+.install-banner-icon{
+  width:48px;height:48px;border-radius:12px;flex-shrink:0;
+  background:linear-gradient(135deg,#1E40AF,#3B82F6);color:#fff;
+  display:flex;align-items:center;justify-content:center;
+  box-shadow:0 4px 12px rgba(30,64,175,.3);
+}
+.install-banner-text{display:flex;flex-direction:column;gap:2px}
+.install-banner-text strong{font-size:.95rem;color:#fff;font-weight:700}
+.install-banner-text span{font-size:.78rem;color:rgba(186,200,220,.7)}
+.install-banner-actions{display:flex;gap:8px}
+.install-btn{
+  flex:1;min-height:40px;border:none;border-radius:10px;cursor:pointer;
+  background:linear-gradient(135deg,#1E40AF,#3B82F6);color:#fff;font-size:.88rem;font-weight:700;
+  box-shadow:0 4px 14px rgba(30,64,175,.3);transition:all .2s;
+}
+.install-btn:hover{transform:translateY(-1px);box-shadow:0 6px 20px rgba(30,64,175,.4)}
+.install-dismiss{
+  min-height:40px;padding:0 16px;border:1px solid rgba(255,255,255,.15);border-radius:10px;
+  background:none;color:rgba(255,255,255,.5);font-size:.82rem;cursor:pointer;transition:all .2s;
+}
+.install-dismiss:hover{background:rgba(255,255,255,.05);color:rgba(255,255,255,.7)}
 
 .hero-footer{
   position:absolute;bottom:14px;left:0;right:0;text-align:center;

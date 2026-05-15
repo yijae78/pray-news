@@ -163,6 +163,7 @@ export default function App() {
     return 'phone';
   });
   const prayerRef = useRef<HTMLDivElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
   const showDeviceToggle = import.meta.env.DEV || (typeof localStorage !== 'undefined' && localStorage.getItem('dev-mode') === '1');
   const [installPrompt, setInstallPrompt] = useState<any>(null);
   const [showInstallBanner, setShowInstallBanner] = useState(false);
@@ -295,6 +296,8 @@ export default function App() {
 
     setCooldown(true); setTimeout(() => setCooldown(false), 15000);
     setError(null); setIsDemo(false); setView('result'); setState('crawling');
+    const ac = new AbortController();
+    abortRef.current = ac;
     try {
       // 모든 날짜에 대해 크롤링
       const allArticles: Article[] = [];
@@ -304,7 +307,7 @@ export default function App() {
 
       const crawlResults = await Promise.allSettled(
         dates.map(async (d) => {
-          const r = await fetch('/api/crawl', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ date: d }) });
+          const r = await fetch('/api/crawl', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ date: d }), signal: ac.signal });
           if (!r.ok) throw new Error('fail');
           return r.json();
         })
@@ -340,7 +343,7 @@ export default function App() {
       setState('analyzing');
 
       const dateLabel = dates.length === 1 ? dates[0] : `${dates[0]}~${dates[dates.length - 1]}`;
-      const r2 = await fetch('/api/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ articles: finalArticles, date: dateLabel }) });
+      const r2 = await fetch('/api/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ articles: finalArticles, date: dateLabel }), signal: ac.signal });
       if (!r2.ok) { const e = await r2.json().catch(() => ({})); throw new Error(e.error || '분석에 실패했습니다.'); }
       const d2: AnalysisResult = await r2.json();
       setAnalysis(d2);
@@ -348,10 +351,20 @@ export default function App() {
       if (dates.length === 1) saveCachedReport(dates[0], finalArticles, d2, combinedMeta);
       setState('done');
     } catch (e) {
+      if (e instanceof DOMException && e.name === 'AbortError') return;
       const m = e instanceof Error ? e.message : '알 수 없는 오류';
       setError(m.includes('fetch') || m.includes('Network') ? '인터넷 연결을 확인해주세요.' : m);
       setState('error');
+    } finally {
+      abortRef.current = null;
     }
+  }
+
+  function stopAnalysis() {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    setState('idle'); setView('landing');
+    flash('분석이 중단되었습니다');
   }
 
   async function copy(text: string) { try { await navigator.clipboard.writeText(text); flash('복사되었습니다'); } catch { flash('복사 실패'); } }
@@ -1045,6 +1058,7 @@ export default function App() {
                     {state === 'analyzing' && <StepIndicator active done={false} text="AI가 분석하고 있습니다" />}
                   </div>
                   <p className="progress-hint">보통 10~20초 정도 걸립니다</p>
+                  <button type="button" className="btn-stop" onClick={stopAnalysis}><X size={14} /> 분석 중단</button>
                 </div>
                 <div className="skel-preview">
                   <div className="skel-card"><div className="skel skel-title" /><div className={`kpi-grid ${deviceMode !== 'phone' ? 'kpi-grid--wide' : ''}`}><div className="skel skel-kpi" /><div className="skel skel-kpi" /><div className="skel skel-kpi" /></div><div className="skel skel-chart" /><div className="skel skel-text" /><div className="skel skel-text" /><div className="skel skel-text skel-text--short" /></div>
@@ -1654,6 +1668,13 @@ const GLOBAL_CSS = `
 .progress-card{animation:fadeUp .5s ease}
 .progress-steps{display:flex;flex-direction:column;gap:12px}
 .progress-hint{margin-top:14px;text-align:center;font-size:.82rem;color:var(--text-muted)}
+.btn-stop{
+  display:flex;align-items:center;justify-content:center;gap:6px;
+  margin:14px auto 0;padding:8px 20px;border-radius:10px;
+  border:1px solid rgba(252,129,129,.3);background:rgba(252,129,129,.08);
+  color:#fc8181;font-size:.82rem;font-weight:600;cursor:pointer;transition:all .2s ease;
+}
+.btn-stop:hover{background:rgba(252,129,129,.15);border-color:rgba(252,129,129,.5)}
 .step-ind{display:flex;align-items:center;gap:10px}
 .step-done{width:24px;height:24px;border-radius:50%;background:rgba(104,211,145,.15);display:flex;align-items:center;justify-content:center;flex-shrink:0}
 .step-spin{color:var(--navy);flex-shrink:0}

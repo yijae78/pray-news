@@ -60,21 +60,24 @@ function getDayOfWeek(dateStr: string): string {
   return days[new Date(dateStr + 'T00:00:00+09:00').getDay()];
 }
 
-function formatPrayer(text: string, tab: string): React.ReactNode {
-  if (!text) return null;
-  // 개인기도: 번호(1. 2. 3.) 앞에 빈 줄 추가로 간격 확보
-  if (tab === 'personal') {
-    const formatted = text.replace(/(?<!\n)\n(\d+[\.\)]\s)/g, '\n\n$1');
-    return formatted;
-  }
-  // 수요기도회: "기도제목" 이후 각 항목을 줄바꿈으로 분리
+function formatPrayer(text: string, tab: string): string {
+  if (!text) return '';
+  let t = text;
+  // Gemini가 번호를 줄바꿈 없이 이어붙이는 경우 처리: "...문장.2. " → "...문장.\n\n2. "
+  t = t.replace(/([.!?。])(\d+[\.\)]\s)/g, '$1\n\n$2');
+  // 이미 줄바꿈은 있지만 빈 줄이 없는 경우: "\n2. " → "\n\n2. "
+  t = t.replace(/(?<!\n)\n(\d+[\.\)]\s)/g, '\n\n$1');
+
   if (tab === 'wednesday') {
-    const formatted = text
-      .replace(/(?<!\n)\n(\d+[\.\)]\s)/g, '\n\n$1')
-      .replace(/(?<!\n)\n([·•▸-]\s)/g, '\n\n$1');
-    return formatted;
+    // ◆ 앞에 빈 줄 2개 확보
+    t = t.replace(/([^\n])\n?(◆)/g, '$1\n\n\n$2');
+    // 불릿 항목 앞에 빈 줄
+    t = t.replace(/(?<!\n)\n([·•▸-]\s)/g, '\n\n$1');
   }
-  return text;
+
+  // 연속 빈 줄 3개 이상 → 2개로 정리
+  t = t.replace(/\n{4,}/g, '\n\n\n');
+  return t;
 }
 
 function getCachedReport(date: string): CachedReport | null {
@@ -108,6 +111,46 @@ function getRecentReports(): { date: string; articleCount: number; cachedAt: num
     sorted.push({ date: DEMO_DATE, articleCount: DEMO_ARTICLES.length, cachedAt: Date.now(), isDemo: true });
   }
   return sorted;
+}
+
+function getTrashReports(): { date: string; articleCount: number; cachedAt: number }[] {
+  const reports: { date: string; articleCount: number; cachedAt: number }[] = [];
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key?.startsWith('trash-report-')) continue;
+      const raw = localStorage.getItem(key);
+      if (!raw) continue;
+      const cached = JSON.parse(raw);
+      // 휴지통도 30일 후 자동 삭제
+      if (Date.now() - cached.cachedAt > 30 * 86400000) { localStorage.removeItem(key); continue; }
+      reports.push({ date: cached.date, articleCount: cached.articles?.length ?? 0, cachedAt: cached.cachedAt });
+    }
+  } catch {}
+  return reports.sort((a, b) => b.cachedAt - a.cachedAt);
+}
+
+function restoreFromTrash(date: string): boolean {
+  try {
+    const raw = localStorage.getItem(`trash-report-${date}`);
+    if (!raw) return false;
+    localStorage.setItem(`cached-report-${date}`, raw);
+    localStorage.removeItem(`trash-report-${date}`);
+    return true;
+  } catch { return false; }
+}
+
+function permanentDeleteFromTrash(date: string) {
+  localStorage.removeItem(`trash-report-${date}`);
+}
+
+function emptyTrash() {
+  const keys: string[] = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key?.startsWith('trash-report-')) keys.push(key);
+  }
+  keys.forEach(k => localStorage.removeItem(k));
 }
 
 function saveCachedReport(date: string, articles: Article[], analysis: AnalysisResult, meta: CrawlMeta) {
@@ -169,6 +212,8 @@ export default function App() {
   const [showInstallBanner, setShowInstallBanner] = useState(false);
   const [showIosGuide, setShowIosGuide] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [prayerFontSize, setPrayerFontSize] = useState(1.05);
+  const [historyTab, setHistoryTab] = useState<'recent'|'trash'>('recent');
   const isStandalone = typeof window !== 'undefined' && (window.matchMedia('(display-mode: standalone)').matches || (window.navigator as any).standalone === true);
   const isIos = typeof navigator !== 'undefined' && /iPhone|iPad|iPod/.test(navigator.userAgent);
 
@@ -275,12 +320,18 @@ export default function App() {
   }
 
   function clearReport() {
-    // 캐시 삭제
+    // 휴지통으로 이동 (삭제 전 백업)
     const dates = getDateList();
-    dates.forEach(d => localStorage.removeItem(`cached-report-${d}`));
+    dates.forEach(d => {
+      const raw = localStorage.getItem(`cached-report-${d}`);
+      if (raw) {
+        localStorage.setItem(`trash-report-${d}`, raw);
+        localStorage.removeItem(`cached-report-${d}`);
+      }
+    });
     // 상태 초기화
     setArticles([]); setAnalysis(null); setMeta(null); setError(null); setState('idle');
-    flash(`${dates.length > 1 ? dates.length + '일분' : formatDateKR(dates[0])} 분석 결과가 삭제되었습니다`);
+    flash(`${dates.length > 1 ? dates.length + '일분' : formatDateKR(dates[0])} 분석 결과가 휴지통으로 이동되었습니다`);
   }
 
   async function analyze(force = false) {
@@ -675,7 +726,13 @@ export default function App() {
                   <button key={k} className={`prayer-tab ${prayerTab === k ? 'prayer-tab--active' : ''}`} onClick={() => setPrayerTab(k)}>{l}</button>
                 ))}
               </div>
-              <div className="prayer-body">{formatPrayer(analysis.prayer[prayerTab], prayerTab)}</div>
+              <div className="prayer-toolbar">
+                <span className="prayer-toolbar-label">글자 크기</span>
+                <button type="button" className="prayer-size-btn" onClick={() => setPrayerFontSize(s => Math.max(0.75, s - 0.1))}>A-</button>
+                <button type="button" className="prayer-size-btn" onClick={() => setPrayerFontSize(1.05)}>기본</button>
+                <button type="button" className="prayer-size-btn" onClick={() => setPrayerFontSize(s => Math.min(1.6, s + 0.1))}>A+</button>
+              </div>
+              <div className="prayer-body" style={{ fontSize: `${prayerFontSize}rem` }}>{formatPrayer(analysis.prayer[prayerTab], prayerTab)}</div>
               <div className="prayer-actions">
                 <button className="btn-prayer btn-prayer--copy" onClick={() => copy(analysis.prayer[prayerTab])}><Copy size={16} /> 복사</button>
                 <div className="dl-menu-wrap">
@@ -844,14 +901,38 @@ export default function App() {
                   </button>
                   {historyOpen && (() => {
                     const recent = getRecentReports();
+                    const trash = getTrashReports();
                     return (
                       <div className="history-dropdown" onClick={e => e.stopPropagation()}>
-                        {recent.map(r => (
-                          <button type="button" key={r.date} className="history-card" onClick={(e) => { e.stopPropagation(); loadFromHistory(r.date, r.isDemo); setHistoryOpen(false); }}>
-                            <span className="history-date">{formatDateKR(r.date)} ({getDayOfWeek(r.date)}){r.isDemo ? ' · 샘플' : ''}</span>
-                            <span className="history-meta">기사 {r.articleCount}건 →</span>
+                        <div className="history-tabs">
+                          <button type="button" className={`history-tab ${historyTab === 'recent' ? 'history-tab--active' : ''}`} onClick={() => setHistoryTab('recent')}>
+                            <Clock size={13} /> 기록 ({recent.length})
                           </button>
-                        ))}
+                          <button type="button" className={`history-tab ${historyTab === 'trash' ? 'history-tab--active' : ''}`} onClick={() => setHistoryTab('trash')}>
+                            <Trash2 size={13} /> 휴지통 ({trash.length})
+                          </button>
+                        </div>
+                        {historyTab === 'recent' ? (
+                          recent.map(r => (
+                            <button type="button" key={r.date} className="history-card" onClick={(e) => { e.stopPropagation(); loadFromHistory(r.date, r.isDemo); setHistoryOpen(false); }}>
+                              <span className="history-date">{formatDateKR(r.date)} ({getDayOfWeek(r.date)}){r.isDemo ? ' · 샘플' : ''}</span>
+                              <span className="history-meta">기사 {r.articleCount}건 →</span>
+                            </button>
+                          ))
+                        ) : trash.length > 0 ? (<>
+                          {trash.map(r => (
+                            <div key={r.date} className="history-card trash-card">
+                              <span className="history-date">{formatDateKR(r.date)} ({getDayOfWeek(r.date)})</span>
+                              <div className="trash-actions">
+                                <button type="button" className="trash-btn trash-btn--restore" onClick={(e) => { e.stopPropagation(); restoreFromTrash(r.date); flash('복구되었습니다'); setHistoryTab('recent'); }}>복구</button>
+                                <button type="button" className="trash-btn trash-btn--delete" onClick={(e) => { e.stopPropagation(); permanentDeleteFromTrash(r.date); flash('완전 삭제되었습니다'); }}>삭제</button>
+                              </div>
+                            </div>
+                          ))}
+                          <button type="button" className="trash-empty-btn" onClick={() => { emptyTrash(); flash('휴지통을 비웠습니다'); setHistoryTab('recent'); }}>휴지통 비우기</button>
+                        </>) : (
+                          <div className="history-empty"><p>휴지통이 비어있습니다</p></div>
+                        )}
                       </div>
                     );
                   })()}
@@ -1503,9 +1584,31 @@ const GLOBAL_CSS = `
 .history-card:hover{background:rgba(59,130,246,.08)}
 .history-date{font-size:.88rem;font-weight:600;color:var(--text)}
 .history-meta{font-size:.75rem;color:var(--text-muted)}
+.history-tabs{display:flex;border-bottom:1px solid var(--border)}
+.history-tab{
+  flex:1;display:flex;align-items:center;justify-content:center;gap:5px;
+  padding:10px;border:none;background:none;color:var(--text-muted);
+  font-size:.78rem;font-weight:600;cursor:pointer;border-bottom:2px solid transparent;
+  transition:all .15s;
+}
+.history-tab--active{color:var(--navy);border-bottom-color:var(--navy)}
+.history-tab:hover{color:var(--text-sub)}
+.trash-card{display:flex;justify-content:space-between;align-items:center;padding:10px 16px;cursor:default}
+.trash-card:not(:last-child){border-bottom:1px solid var(--border)}
+.trash-actions{display:flex;gap:6px}
+.trash-btn{padding:4px 10px;border-radius:6px;border:none;font-size:.72rem;font-weight:600;cursor:pointer;transition:all .15s}
+.trash-btn--restore{background:rgba(59,130,246,.12);color:#60a5fa}
+.trash-btn--restore:hover{background:rgba(59,130,246,.2)}
+.trash-btn--delete{background:rgba(252,129,129,.1);color:#fc8181}
+.trash-btn--delete:hover{background:rgba(252,129,129,.2)}
+.trash-empty-btn{
+  display:block;width:100%;padding:10px;border:none;border-top:1px solid var(--border);
+  background:none;color:var(--error);font-size:.78rem;font-weight:600;cursor:pointer;
+  transition:background .15s;
+}
+.trash-empty-btn:hover{background:rgba(252,129,129,.06)}
 .history-empty{padding:20px;text-align:center}
 .history-empty p{font-size:.88rem;color:var(--text-sub);margin:0}
-.history-empty-sub{font-size:.75rem;color:var(--text-muted);margin-top:6px!important}
 
 .hero-footer{
   position:absolute;bottom:14px;left:0;right:0;text-align:center;
@@ -1827,6 +1930,17 @@ const GLOBAL_CSS = `
   transition:all .15s ease;
 }
 .prayer-tab--active{background:var(--prayer-bg);color:var(--gold);font-weight:600;border-bottom-color:var(--gold)}
+.prayer-toolbar{
+  display:flex;align-items:center;gap:6px;padding:8px 18px;
+  background:var(--prayer-bg);border-bottom:1px solid var(--prayer-border);
+}
+.prayer-toolbar-label{font-size:.75rem;color:var(--text-muted);margin-right:4px}
+.prayer-size-btn{
+  padding:4px 10px;border-radius:6px;border:1px solid var(--border);
+  background:transparent;color:var(--text-sub);font-size:.75rem;font-weight:600;
+  cursor:pointer;transition:all .15s ease;
+}
+.prayer-size-btn:hover{border-color:var(--gold);color:var(--gold)}
 .prayer-body{
   padding:20px 18px;background:var(--prayer-bg);white-space:pre-wrap;
   font-size:1.05rem;line-height:2;color:var(--text);font-family:var(--font-serif);

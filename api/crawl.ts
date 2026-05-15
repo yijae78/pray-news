@@ -249,7 +249,26 @@ async function fetchWithTimeout(url: string, timeoutMs: number): Promise<string 
       },
     });
     if (!resp.ok) return null;
-    return await resp.text();
+
+    // EUC-KR 등 비-UTF-8 인코딩 처리
+    const buffer = await resp.arrayBuffer();
+    const contentType = resp.headers.get('content-type') || '';
+    const ctMatch = contentType.match(/charset=["']?([^\s;"']+)/i);
+    let charset = ctMatch ? ctMatch[1].toLowerCase() : '';
+
+    // Content-Type에 charset이 없으면 XML 선언에서 확인
+    if (!charset) {
+      const peek = new TextDecoder('ascii').decode(new Uint8Array(buffer).slice(0, 300));
+      const xmlMatch = peek.match(/encoding=["']([^"']+)["']/i);
+      if (xmlMatch) charset = xmlMatch[1].toLowerCase();
+    }
+
+    const encoding = charset || 'utf-8';
+    try {
+      return new TextDecoder(encoding).decode(buffer);
+    } catch {
+      return new TextDecoder('utf-8').decode(buffer);
+    }
   } catch {
     return null;
   } finally {

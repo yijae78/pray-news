@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pray-news-v2';
+const CACHE_NAME = 'pray-news-v3';
 const STATIC_ASSETS = ['/', '/index.html'];
 
 self.addEventListener('install', (e) => {

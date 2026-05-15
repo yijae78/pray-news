@@ -218,6 +218,16 @@ export default function App() {
   const [historySearch, setHistorySearch] = useState('');
   const isStandalone = typeof window !== 'undefined' && (window.matchMedia('(display-mode: standalone)').matches || (window.navigator as any).standalone === true);
   const isIos = typeof navigator !== 'undefined' && /iPhone|iPad|iPod/.test(navigator.userAgent);
+  const [modalContent, setModalContent] = useState<{ type: 'issue' | 'category' | 'prediction'; index: number } | null>(null);
+
+  // 모달 ESC 닫기 + 바디 스크롤 잠금
+  useEffect(() => {
+    if (!modalContent) return;
+    document.body.style.overflow = 'hidden';
+    const handleEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') setModalContent(null); };
+    window.addEventListener('keydown', handleEsc);
+    return () => { document.body.style.overflow = ''; window.removeEventListener('keydown', handleEsc); };
+  }, [modalContent]);
 
   // PWA 설치 프롬프트 캡처
   useEffect(() => {
@@ -265,6 +275,7 @@ export default function App() {
   function goHome() {
     setView('landing'); setState('idle'); setArticles([]); setAnalysis(null);
     setMeta(null); setIsDemo(false); setError(null); setSidebarOpen(false);
+    setModalContent(null);
   }
 
   function loadFromHistory(reportDate: string, isDemo?: boolean) {
@@ -608,7 +619,7 @@ export default function App() {
           <section className="result-section anim-fadeUp" key="issues">
             <STitle n={2}>오늘의 주요 이슈</STitle>
             {analysis.summary[0] && (
-              <div className="issue-hero">
+              <div className="issue-hero clickable-card" onClick={() => setModalContent({ type: 'issue', index: 0 })}>
                 <span className="issue-hero-badge">핵심 이슈</span>
                 <h4 className="issue-hero-title">{analysis.summary[0].title}</h4>
                 <p className="issue-hero-desc">{analysis.summary[0].description}</p>
@@ -617,7 +628,7 @@ export default function App() {
             {analysis.summary.length > 1 && (
               <div className={`issue-grid ${deviceMode !== 'phone' ? 'issue-grid--wide' : ''}`}>
                 {analysis.summary.slice(1).map((iss, i) => (
-                  <div key={i} className="issue-card card">
+                  <div key={i} className="issue-card card clickable-card" onClick={() => setModalContent({ type: 'issue', index: i + 1 })}>
                     <h4 className="issue-card-title">{iss.title}</h4>
                     <p className="issue-card-desc">{iss.description}</p>
                   </div>
@@ -637,7 +648,7 @@ export default function App() {
               ))}</div>
               {analysis.categories[catTab] && (
                 <ul className="cat-list">{analysis.categories[catTab].articles.map(a => (
-                  <li key={a.id} className="cat-item">{a.title}</li>
+                  <li key={a.id} className="cat-item clickable-card" onClick={() => setModalContent({ type: 'category', index: catTab })}>{a.title}</li>
                 ))}</ul>
               )}
             </div>
@@ -712,8 +723,8 @@ export default function App() {
           <section className="result-section anim-fadeUp" key="pred">
             <STitle n={6}>미래 전망</STitle>
             <div className={`pred-grid ${deviceMode !== 'phone' ? 'pred-grid--wide' : ''}`}>
-              <div className="card pred-card"><span className="pred-badge pred-badge--short">단기 1~2주</span><p className="pred-text">{analysis.prediction.shortTerm}</p></div>
-              <div className="card pred-card"><span className="pred-badge pred-badge--mid">중기 1~3개월</span><p className="pred-text">{analysis.prediction.midTerm}</p></div>
+              <div className="card pred-card clickable-card" onClick={() => setModalContent({ type: 'prediction', index: 0 })}><span className="pred-badge pred-badge--short">단기 1~2주</span><p className="pred-text">{analysis.prediction.shortTerm}</p></div>
+              <div className="card pred-card clickable-card" onClick={() => setModalContent({ type: 'prediction', index: 1 })}><span className="pred-badge pred-badge--mid">중기 1~3개월</span><p className="pred-text">{analysis.prediction.midTerm}</p></div>
             </div>
           </section>
         );
@@ -1023,23 +1034,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* PWA 자동 설치 배너 */}
-            {showInstallBanner && (
-              <div className="install-banner">
-                <div className="install-banner-content">
-                  <div className="install-banner-icon"><Cross size={24} /></div>
-                  <div className="install-banner-text">
-                    <strong>기도뉴스 앱 설치</strong>
-                    <span>홈 화면에 추가하고 앱처럼 사용하세요</span>
-                  </div>
-                </div>
-                <div className="install-banner-actions">
-                  <button className="install-btn" onClick={handleInstall}>설치하기</button>
-                  <button className="install-dismiss" onClick={dismissInstall}>나중에</button>
-                </div>
-              </div>
-            )}
-
             {/* 하단 고정 앱 설치 버튼 (이미 설치된 경우 숨김) */}
             {!isStandalone && (
               <div className="install-fixed">
@@ -1254,6 +1248,11 @@ export default function App() {
             </button>
           )}
 
+          {/* Detail Modal */}
+          {modalContent !== null && analysis !== null && (
+            <DetailModal analysis={analysis} modalContent={modalContent} isPhone={isPhone} onClose={() => setModalContent(null)} onNav={(type, index) => setModalContent({ type, index })} />
+          )}
+
           {/* Toast */}
           {toast && <div className="toast">{toast}</div>}
         </div>
@@ -1286,6 +1285,73 @@ function StepIndicator({ active, done, text, doneText }: { active: boolean; done
         <Loader2 size={24} className="spin step-spin" />
       ) : <div className="step-idle" />}
       <span className={`step-text ${done ? 'step-text--done' : active ? 'step-text--active' : ''}`}>{done && doneText ? doneText : text}</span>
+    </div>
+  );
+}
+
+function DetailModal({ analysis, modalContent, isPhone, onClose, onNav }: {
+  analysis: AnalysisResult;
+  modalContent: { type: 'issue' | 'category' | 'prediction'; index: number };
+  isPhone: boolean;
+  onClose: () => void;
+  onNav: (type: 'issue' | 'category' | 'prediction', index: number) => void;
+}) {
+  const { type, index } = modalContent;
+  let title = '';
+  let badgeEl: React.ReactNode = null;
+  let body: React.ReactNode = null;
+  let total = 0;
+
+  if (type === 'issue') {
+    const issue = analysis.summary[index];
+    if (!issue) return null;
+    title = issue.title;
+    badgeEl = <span className="detail-badge detail-badge--issue">{index === 0 ? '핵심 이슈' : `이슈 ${index + 1}`}</span>;
+    body = <p className="detail-desc">{issue.description}</p>;
+    total = analysis.summary.length;
+  } else if (type === 'category') {
+    const cat = analysis.categories[index];
+    if (!cat) return null;
+    title = `${cat.name} (${cat.articles.length}건)`;
+    badgeEl = <span className="detail-badge detail-badge--cat">카테고리</span>;
+    body = (
+      <ul className="modal-article-list">{cat.articles.map(a => (
+        <li key={a.id}><span>{a.title}</span></li>
+      ))}</ul>
+    );
+    total = analysis.categories.length;
+  } else if (type === 'prediction') {
+    const items = [
+      { label: '단기 1~2주', cls: 'detail-badge--short', text: analysis.prediction.shortTerm },
+      { label: '중기 1~3개월', cls: 'detail-badge--mid', text: analysis.prediction.midTerm },
+    ];
+    const item = items[index];
+    if (!item) return null;
+    title = '미래 전망';
+    badgeEl = <span className={`detail-badge ${item.cls}`}>{item.label}</span>;
+    body = <p className="detail-desc detail-desc--pred">{item.text}</p>;
+    total = items.length;
+  }
+
+  return (
+    <div className="detail-overlay" onClick={onClose}>
+      <div className={`detail-modal ${isPhone ? 'detail-modal--phone' : ''}`} onClick={e => e.stopPropagation()}>
+        <div className="detail-header">
+          <div className="detail-header-text">
+            {badgeEl}
+            <h3 className="detail-title">{title}</h3>
+          </div>
+          <button className="detail-close" onClick={onClose}><X size={20} /></button>
+        </div>
+        <div className="detail-body">{body}</div>
+        {total > 1 && (
+          <div className="detail-nav">
+            <button className="detail-nav-btn" disabled={index <= 0} onClick={() => onNav(type, index - 1)}>← 이전</button>
+            <span className="detail-nav-pos">{index + 1} / {total}</span>
+            <button className="detail-nav-btn" disabled={index >= total - 1} onClick={() => onNav(type, index + 1)}>다음 →</button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -1329,6 +1395,10 @@ const GLOBAL_CSS = `
 @keyframes iconRing{0%{transform:scale(1);opacity:.6}50%{transform:scale(1.15);opacity:.3}100%{transform:scale(1);opacity:.6}}
 @keyframes tickerRev{0%{transform:translateX(-50%)}100%{transform:translateX(0)}}
 @keyframes neonShift{0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}}
+@keyframes redNeonPulse{
+  0%,100%{box-shadow:0 0 8px rgba(255,60,60,.3),0 0 20px rgba(255,60,60,.15);border-color:rgba(255,60,60,.5);text-shadow:0 0 6px rgba(255,100,100,.3)}
+  50%{box-shadow:0 0 18px rgba(255,50,50,.7),0 0 40px rgba(255,50,50,.4),0 0 60px rgba(255,30,30,.2);border-color:rgba(255,80,80,.9);text-shadow:0 0 12px rgba(255,120,120,.6)}
+}
 
 .spin{animation:spin 1s linear infinite}
 .anim-fadeUp{animation:fadeUp .4s ease both}
@@ -1513,13 +1583,16 @@ const GLOBAL_CSS = `
 .hero-date-input{background:none;border:none;color:#fff;font-size:.95rem;outline:none;width:100%;color-scheme:dark}
 
 .btn-hero-primary{
-  width:100%;min-height:52px;border-radius:var(--radius);border:none;cursor:pointer;
-  background:linear-gradient(135deg,#1E40AF,#3B82F6);color:#fff;font-size:1.05rem;font-weight:700;
+  width:100%;min-height:52px;border-radius:var(--radius);cursor:pointer;
+  border:2px solid rgba(255,60,60,.6);
+  background:rgba(255,40,40,.15);color:#ff6b6b;font-size:1.05rem;font-weight:800;
   display:flex;align-items:center;justify-content:center;gap:8px;
-  box-shadow:0 4px 20px rgba(30,64,175,.3);transition:all var(--transition);
+  box-shadow:0 0 14px rgba(255,50,50,.3),0 0 30px rgba(255,50,50,.15);
+  transition:all var(--transition);
+  animation:redNeonPulse 1.8s ease-in-out infinite;
 }
-.btn-hero-primary:hover{transform:translateY(-2px);box-shadow:0 6px 28px rgba(30,64,175,.4)}
-.btn-hero-primary:disabled{opacity:.4;cursor:not-allowed;transform:none}
+.btn-hero-primary:hover{transform:translateY(-2px);background:rgba(255,40,40,.3);border-color:rgba(255,80,80,.9);color:#fff;box-shadow:0 0 24px rgba(255,50,50,.6),0 0 50px rgba(255,50,50,.3)}
+.btn-hero-primary:disabled{opacity:.4;cursor:not-allowed;transform:none;animation:none}
 
 .btn-hero-secondary{
   width:100%;min-height:46px;border-radius:var(--radius);cursor:pointer;
@@ -1550,36 +1623,6 @@ const GLOBAL_CSS = `
 }
 .hero-step-arrow{color:rgba(30,64,175,.2);flex-shrink:0}
 
-/* PWA Install Banner */
-.install-banner{
-  position:relative;z-index:2;max-width:380px;margin:24px auto 0;
-  background:rgba(30,64,175,.12);backdrop-filter:blur(16px);
-  border:1.5px solid rgba(59,130,246,.25);border-radius:var(--radius);
-  padding:16px;animation:fadeUp .5s ease both;
-}
-.install-banner-content{display:flex;align-items:center;gap:12px;margin-bottom:12px}
-.install-banner-icon{
-  width:48px;height:48px;border-radius:12px;flex-shrink:0;
-  background:linear-gradient(135deg,#1E40AF,#3B82F6);color:#fff;
-  display:flex;align-items:center;justify-content:center;
-  box-shadow:0 4px 12px rgba(30,64,175,.3);
-}
-.install-banner-text{display:flex;flex-direction:column;gap:2px}
-.install-banner-text strong{font-size:.95rem;color:#fff;font-weight:700}
-.install-banner-text span{font-size:.78rem;color:rgba(186,200,220,.7)}
-.install-banner-actions{display:flex;gap:8px}
-.install-btn{
-  flex:1;min-height:40px;border:none;border-radius:10px;cursor:pointer;
-  background:linear-gradient(135deg,#1E40AF,#3B82F6);color:#fff;font-size:.88rem;font-weight:700;
-  box-shadow:0 4px 14px rgba(30,64,175,.3);transition:all .2s;
-}
-.install-btn:hover{transform:translateY(-1px);box-shadow:0 6px 20px rgba(30,64,175,.4)}
-.install-dismiss{
-  min-height:40px;padding:0 16px;border:1px solid rgba(255,255,255,.15);border-radius:10px;
-  background:none;color:rgba(255,255,255,.5);font-size:.82rem;cursor:pointer;transition:all .2s;
-}
-.install-dismiss:hover{background:rgba(255,255,255,.05);color:rgba(255,255,255,.7)}
-
 /* 하단 고정 앱 설치 버튼 */
 .install-fixed{
   position:relative;z-index:2;text-align:center;margin-top:20px;
@@ -1587,15 +1630,15 @@ const GLOBAL_CSS = `
 }
 .install-fixed-btn{
   display:inline-flex;align-items:center;gap:8px;
-  padding:10px 28px;border-radius:50px;border:1.5px solid rgba(59,130,246,.25);
-  background:rgba(30,64,175,.08);backdrop-filter:blur(8px);
-  color:rgba(147,197,253,.85);font-size:.85rem;font-weight:600;
+  padding:12px 32px;border-radius:50px;
+  border:1.5px solid rgba(255,255,255,.15);
+  background:rgba(255,255,255,.05);backdrop-filter:blur(8px);
+  color:rgba(255,255,255,.6);font-size:.85rem;font-weight:600;
   cursor:pointer;transition:all .25s;
 }
 .install-fixed-btn:hover{
-  background:rgba(30,64,175,.15);border-color:rgba(59,130,246,.45);
+  background:rgba(255,255,255,.1);border-color:rgba(255,255,255,.3);
   color:#fff;transform:translateY(-2px);
-  box-shadow:0 4px 20px rgba(30,64,175,.25);
 }
 
 /* iOS 설치 안내 모달 */
@@ -2221,4 +2264,76 @@ const GLOBAL_CSS = `
   display:flex;align-items:center;transition:all .2s;
 }
 .appbar-report-btn:hover{background:rgba(212,160,23,.25);border-color:rgba(212,160,23,.5)}
+
+/* ══════════════════════════════
+   CLICKABLE CARD
+   ══════════════════════════════ */
+.clickable-card{cursor:pointer;transition:all .2s ease}
+.clickable-card:hover{transform:translateY(-2px);box-shadow:var(--shadow-md);border-color:var(--navy) !important}
+.clickable-card:active{transform:scale(.98)}
+
+/* ══════════════════════════════
+   DETAIL MODAL (Lightbox)
+   ══════════════════════════════ */
+.detail-overlay{
+  position:fixed;inset:0;z-index:9998;
+  background:rgba(0,0,0,.72);backdrop-filter:blur(10px);
+  display:flex;align-items:center;justify-content:center;
+  padding:20px;animation:fadeIn .2s ease;
+}
+.detail-modal{
+  background:linear-gradient(180deg,#1a1f2e,#151a28);
+  border:1px solid rgba(59,130,246,.15);border-radius:20px;
+  max-width:580px;width:100%;max-height:85vh;
+  display:flex;flex-direction:column;
+  box-shadow:0 20px 60px rgba(0,0,0,.6),0 0 40px rgba(59,130,246,.08);
+  animation:fadeUp .25s ease;
+}
+.detail-modal--phone{
+  max-width:100%;max-height:100%;width:100%;height:100%;border-radius:0;
+}
+.detail-header{
+  display:flex;align-items:flex-start;justify-content:space-between;gap:12px;
+  padding:22px 22px 16px;border-bottom:1px solid var(--border);
+}
+.detail-header-text{display:flex;flex-direction:column;gap:6px;flex:1;min-width:0}
+.detail-badge{
+  display:inline-block;font-size:.68rem;font-weight:700;border-radius:20px;
+  padding:3px 12px;width:fit-content;letter-spacing:.5px;
+}
+.detail-badge--issue{color:#60a5fa;background:rgba(59,130,246,.1);border:1px solid rgba(59,130,246,.2)}
+.detail-badge--cat{color:#a78bfa;background:rgba(167,139,250,.1);border:1px solid rgba(167,139,250,.2)}
+.detail-badge--short{color:var(--navy);background:color-mix(in srgb,var(--navy) 7%,transparent);border:1px solid color-mix(in srgb,var(--navy) 15%,transparent)}
+.detail-badge--mid{color:var(--gold);background:color-mix(in srgb,var(--gold) 8%,transparent);border:1px solid color-mix(in srgb,var(--gold) 15%,transparent)}
+.detail-title{font-size:1.15rem;font-weight:700;color:var(--text);line-height:1.45}
+.detail-close{
+  width:36px;height:36px;border-radius:10px;border:1px solid var(--border);
+  background:none;color:var(--text-sub);cursor:pointer;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;transition:all .15s;
+}
+.detail-close:hover{border-color:var(--error);color:var(--error);background:rgba(252,129,129,.06)}
+.detail-body{flex:1;overflow-y:auto;padding:22px}
+.detail-desc{font-size:.95rem;color:var(--text-sub);line-height:2.1}
+.detail-desc--pred{font-size:1rem;line-height:2.2}
+.modal-article-list{list-style:none;display:flex;flex-direction:column;gap:8px}
+.modal-article-list li{
+  font-size:.88rem;color:var(--text-sub);line-height:1.6;padding:12px 14px;
+  border-radius:10px;border:1px solid var(--border);background:var(--bg);
+  display:flex;align-items:center;justify-content:space-between;gap:10px;
+  transition:all .15s;
+}
+.modal-article-list li:hover{border-color:color-mix(in srgb,var(--navy) 30%,transparent)}
+.modal-article-list a{color:var(--navy);flex-shrink:0;display:flex;align-items:center}
+.detail-nav{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:14px 22px;border-top:1px solid var(--border);
+}
+.detail-nav-btn{
+  padding:8px 18px;border-radius:8px;border:1px solid var(--border);
+  background:none;color:var(--text-sub);font-size:.82rem;font-weight:600;
+  cursor:pointer;transition:all .15s;
+}
+.detail-nav-btn:hover:not(:disabled){border-color:var(--navy);color:var(--navy);background:rgba(59,130,246,.05)}
+.detail-nav-btn:disabled{opacity:.2;cursor:not-allowed}
+.detail-nav-pos{font-size:.78rem;color:var(--text-muted);font-weight:500}
 `;

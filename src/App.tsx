@@ -331,7 +331,8 @@ export default function App() {
         if (seen.has(key)) return false;
         seen.add(key); return true;
       });
-      const finalArticles = deduped.slice(0, 50);
+      const maxArticles = dates.length > 1 ? 30 : 50;
+      const finalArticles = deduped.slice(0, maxArticles);
 
       const combinedMeta: CrawlMeta = {
         totalFetched, filteredCult: totalCult, filteredDuplicate: totalDup + (deduped.length < allArticles.length ? allArticles.length - deduped.length : 0),

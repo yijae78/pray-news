@@ -1197,7 +1197,7 @@ const GLOBAL_CSS = `
 .landing-root{font-family:var(--font);color:var(--text);background:#060a14;min-height:100vh;animation:fadeIn .4s ease}
 
 .hero{
-  position:relative;overflow:hidden;text-align:center;
+  position:relative;overflow:visible;text-align:center;
   padding:80px 20px 80px;
   background:
     radial-gradient(ellipse at 30% 20%,rgba(30,64,175,0.18),transparent 50%),
@@ -1207,8 +1207,8 @@ const GLOBAL_CSS = `
     linear-gradient(135deg,#060a14 0%,#0a1228 30%,#0d1832 60%,#081020 100%);
 }
 .hero--full{
-  min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;
-  padding:40px 18px;
+  min-height:100dvh;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  padding:24px 18px;
 }
 
 /* Background mesh grid */

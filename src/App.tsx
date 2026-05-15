@@ -4,7 +4,7 @@ import {
   AlertTriangle, ChevronDown, ChevronUp, RefreshCw, ExternalLink,
   Newspaper, ShieldCheck, Brain, BookOpen, ChevronRight,
   Rss, Cpu, FileText, Menu, X, TrendingUp,
-  Cross, Sparkles, Smartphone, Tablet, Monitor, Home, Zap, Download, Trash2,
+  Cross, Sparkles, Smartphone, Tablet, Monitor, Home, Zap, Download, Trash2, Clock,
 } from 'lucide-react';
 import type { Article, AnalysisResult, AppState, CrawlMeta, CachedReport } from './types';
 import { Chart as ChartJS, ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement } from 'chart.js';
@@ -82,9 +82,25 @@ function getCachedReport(date: string): CachedReport | null {
     const raw = localStorage.getItem(`cached-report-${date}`);
     if (!raw) return null;
     const cached: CachedReport = JSON.parse(raw);
-    if (Date.now() - cached.cachedAt > 86400000) { localStorage.removeItem(`cached-report-${date}`); return null; }
+    if (Date.now() - cached.cachedAt > 7 * 86400000) { localStorage.removeItem(`cached-report-${date}`); return null; }
     return cached;
   } catch { return null; }
+}
+
+function getRecentReports(): { date: string; articleCount: number; cachedAt: number }[] {
+  const reports: { date: string; articleCount: number; cachedAt: number }[] = [];
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key?.startsWith('cached-report-')) continue;
+      const raw = localStorage.getItem(key);
+      if (!raw) continue;
+      const cached = JSON.parse(raw);
+      if (Date.now() - cached.cachedAt > 7 * 86400000) { localStorage.removeItem(key); continue; }
+      reports.push({ date: cached.date, articleCount: cached.articles?.length ?? 0, cachedAt: cached.cachedAt });
+    }
+  } catch {}
+  return reports.sort((a, b) => b.cachedAt - a.cachedAt).slice(0, 7);
 }
 
 function saveCachedReport(date: string, articles: Article[], analysis: AnalysisResult, meta: CrawlMeta) {
@@ -193,6 +209,15 @@ export default function App() {
   function goHome() {
     setView('landing'); setState('idle'); setArticles([]); setAnalysis(null);
     setMeta(null); setIsDemo(false); setError(null); setSidebarOpen(false);
+  }
+
+  function loadFromHistory(reportDate: string) {
+    const cached = getCachedReport(reportDate);
+    if (!cached) return;
+    setDate(reportDate);
+    setArticles(cached.articles); setAnalysis(cached.analysis); setMeta(cached.meta);
+    setIsDemo(false); setState('done'); setView('result'); setError(null);
+    setActiveId('sec-stats');
   }
 
   // 날짜 범위 계산
@@ -857,6 +882,21 @@ export default function App() {
               </div>
             )}
 
+            {/* 최근 분석 기록 */}
+            {(() => { const recent = getRecentReports(); return recent.length > 0 ? (
+              <section className="history-section">
+                <h3 className="history-title"><Clock size={16} /> 최근 분석 기록</h3>
+                <div className="history-list">
+                  {recent.map(r => (
+                    <button key={r.date} className="history-card" onClick={() => loadFromHistory(r.date)}>
+                      <span className="history-date">{formatDateKR(r.date)} ({getDayOfWeek(r.date)})</span>
+                      <span className="history-meta">기사 {r.articleCount}건 · {new Date(r.cachedAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}</span>
+                    </button>
+                  ))}
+                </div>
+              </section>
+            ) : null; })()}
+
             <footer className="hero-footer">
               <p>2026 기도로 읽는 뉴스 · Developed by Yijae Shin</p>
             </footer>
@@ -1410,6 +1450,26 @@ const GLOBAL_CSS = `
   font-size:.92rem;font-weight:700;transition:all .2s;
 }
 .ios-guide-close:hover{opacity:.9}
+
+/* ── History Section ── */
+.history-section{
+  position:relative;z-index:2;max-width:480px;margin:0 auto;padding:32px 24px 24px;
+  animation:fadeUp .6s ease .7s both;
+}
+.history-title{
+  display:flex;align-items:center;gap:8px;font-size:.9rem;font-weight:600;
+  color:var(--text-sub);margin-bottom:12px;
+}
+.history-list{display:flex;flex-direction:column;gap:8px}
+.history-card{
+  display:flex;justify-content:space-between;align-items:center;
+  padding:14px 16px;border-radius:12px;border:1px solid var(--border);
+  background:rgba(26,31,46,.7);backdrop-filter:blur(8px);
+  cursor:pointer;transition:all .2s ease;text-align:left;
+}
+.history-card:hover{border-color:var(--navy);background:rgba(59,130,246,.06);transform:translateX(4px)}
+.history-date{font-size:.88rem;font-weight:600;color:var(--text)}
+.history-meta{font-size:.75rem;color:var(--text-muted)}
 
 .hero-footer{
   position:absolute;bottom:14px;left:0;right:0;text-align:center;

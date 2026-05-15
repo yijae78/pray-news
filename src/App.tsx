@@ -882,25 +882,25 @@ export default function App() {
               </div>
             )}
 
-            {/* 최근 분석 기록 */}
-            {(() => { const recent = getRecentReports(); return recent.length > 0 ? (
-              <section className="history-section">
-                <h3 className="history-title"><Clock size={16} /> 최근 분석 기록</h3>
-                <div className="history-list">
-                  {recent.map(r => (
-                    <button key={r.date} className="history-card" onClick={() => loadFromHistory(r.date)}>
-                      <span className="history-date">{formatDateKR(r.date)} ({getDayOfWeek(r.date)})</span>
-                      <span className="history-meta">기사 {r.articleCount}건 · {new Date(r.cachedAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}</span>
-                    </button>
-                  ))}
-                </div>
-              </section>
-            ) : null; })()}
-
             <footer className="hero-footer">
               <p>2026 기도로 읽는 뉴스 · Developed by Yijae Shin</p>
             </footer>
           </section>
+
+          {/* 최근 분석 기록 — hero 밖, landing-root 안 */}
+          {(() => { const recent = getRecentReports(); return recent.length > 0 ? (
+            <section className="history-section">
+              <h3 className="history-title"><Clock size={16} /> 최근 분석 기록</h3>
+              <div className="history-list">
+                {recent.map(r => (
+                  <button key={r.date} className="history-card" onClick={() => loadFromHistory(r.date)}>
+                    <span className="history-date">{formatDateKR(r.date)} ({getDayOfWeek(r.date)})</span>
+                    <span className="history-meta">기사 {r.articleCount}건 · {new Date(r.cachedAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}</span>
+                  </button>
+                ))}
+              </div>
+            </section>
+          ) : null; })()}
         </div>
       </div>
     </>
@@ -1453,8 +1453,9 @@ const GLOBAL_CSS = `
 
 /* ── History Section ── */
 .history-section{
-  position:relative;z-index:2;max-width:480px;margin:0 auto;padding:32px 24px 24px;
-  animation:fadeUp .6s ease .7s both;
+  position:relative;z-index:2;max-width:480px;margin:0 auto;padding:32px 24px 40px;
+  background:var(--bg);
+  animation:fadeUp .5s ease both;
 }
 .history-title{
   display:flex;align-items:center;gap:8px;font-size:.9rem;font-weight:600;

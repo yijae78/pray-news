@@ -60,6 +60,23 @@ function getDayOfWeek(dateStr: string): string {
   return days[new Date(dateStr + 'T00:00:00+09:00').getDay()];
 }
 
+function formatPrayer(text: string, tab: string): React.ReactNode {
+  if (!text) return null;
+  // 개인기도: 번호(1. 2. 3.) 앞에 빈 줄 추가로 간격 확보
+  if (tab === 'personal') {
+    const formatted = text.replace(/(?<!\n)\n(\d+[\.\)]\s)/g, '\n\n$1');
+    return formatted;
+  }
+  // 수요기도회: "기도제목" 이후 각 항목을 줄바꿈으로 분리
+  if (tab === 'wednesday') {
+    const formatted = text
+      .replace(/(?<!\n)\n(\d+[\.\)]\s)/g, '\n\n$1')
+      .replace(/(?<!\n)\n([·•▸-]\s)/g, '\n\n$1');
+    return formatted;
+  }
+  return text;
+}
+
 function getCachedReport(date: string): CachedReport | null {
   try {
     const raw = localStorage.getItem(`cached-report-${date}`);
@@ -531,18 +548,34 @@ export default function App() {
           <section className="result-section anim-fadeUp" key="sent">
             <STitle n={4}>긍정·부정 평가</STitle>
             <div className="card">
-              <div className="sent-bar">
-                {analysis.sentiment.overall.positive > 0 && <div className="sent-seg sent-pos" style={{ width: `${analysis.sentiment.overall.positive}%` }}>{analysis.sentiment.overall.positive}%</div>}
-                {analysis.sentiment.overall.neutral > 0 && <div className="sent-seg sent-neu" style={{ width: `${analysis.sentiment.overall.neutral}%` }}>{analysis.sentiment.overall.neutral}%</div>}
-                {analysis.sentiment.overall.negative > 0 && <div className="sent-seg sent-neg" style={{ width: `${analysis.sentiment.overall.negative}%` }}>{analysis.sentiment.overall.negative}%</div>}
+              {/* 퍼센트 수치 카드 */}
+              <div className="sent-stats">
+                <div className="sent-stat sent-stat--pos">
+                  <span className="sent-stat-val">{analysis.sentiment.overall.positive}%</span>
+                  <span className="sent-stat-label">긍정</span>
+                </div>
+                <div className="sent-stat sent-stat--neu">
+                  <span className="sent-stat-val">{analysis.sentiment.overall.neutral}%</span>
+                  <span className="sent-stat-label">중립</span>
+                </div>
+                <div className="sent-stat sent-stat--neg">
+                  <span className="sent-stat-val">{analysis.sentiment.overall.negative}%</span>
+                  <span className="sent-stat-label">부정</span>
+                </div>
               </div>
-              <div className="sent-labels"><span className="c-pos">긍정</span><span className="c-neu">중립</span><span className="c-neg">부정</span></div>
-              <div style={{ maxWidth: 220, margin: '16px auto' }}>
+              {/* 비율 바 */}
+              <div className="sent-bar">
+                {analysis.sentiment.overall.positive > 0 && <div className="sent-seg sent-pos" style={{ width: `${analysis.sentiment.overall.positive}%` }}></div>}
+                {analysis.sentiment.overall.neutral > 0 && <div className="sent-seg sent-neu" style={{ width: `${analysis.sentiment.overall.neutral}%` }}></div>}
+                {analysis.sentiment.overall.negative > 0 && <div className="sent-seg sent-neg" style={{ width: `${analysis.sentiment.overall.negative}%` }}></div>}
+              </div>
+              {/* 도넛 차트 */}
+              <div style={{ maxWidth: 240, margin: '20px auto' }}>
                 <Doughnut data={{
                   labels: ['긍정', '중립', '부정'],
                   datasets: [{ data: [analysis.sentiment.overall.positive, analysis.sentiment.overall.neutral, analysis.sentiment.overall.negative],
-                    backgroundColor: ['#3b82f6', '#64748b', '#fc8181'], borderWidth: 0 }]
-                }} options={{ plugins: { legend: { position: 'bottom' as const, labels: { padding: 14, usePointStyle: true, pointStyle: 'circle' } } } }} />
+                    backgroundColor: ['#3b82f6', '#64748b', '#fc8181'], borderWidth: 2, borderColor: '#1a1f2e' }]
+                }} options={{ cutout: '60%', plugins: { legend: { position: 'bottom' as const, labels: { padding: 16, usePointStyle: true, pointStyle: 'circle', color: '#e2e8f0', font: { size: 13 } } } } }} />
               </div>
               <p className="sent-assessment">{analysis.sentiment.overallAssessment}</p>
             </div>
@@ -594,7 +627,7 @@ export default function App() {
                   <button key={k} className={`prayer-tab ${prayerTab === k ? 'prayer-tab--active' : ''}`} onClick={() => setPrayerTab(k)}>{l}</button>
                 ))}
               </div>
-              <div className="prayer-body">{analysis.prayer[prayerTab]}</div>
+              <div className="prayer-body">{formatPrayer(analysis.prayer[prayerTab], prayerTab)}</div>
               <div className="prayer-actions">
                 <button className="btn-prayer btn-prayer--copy" onClick={() => copy(analysis.prayer[prayerTab])}><Copy size={16} /> 복사</button>
                 <div className="dl-menu-wrap">
@@ -1644,12 +1677,20 @@ const GLOBAL_CSS = `
 .cat-item{font-size:.88rem;color:var(--text-sub);line-height:1.5;padding:4px 0 4px 10px;border-left:3px solid color-mix(in srgb,var(--navy) 18%,transparent)}
 
 /* ── Sentiment ── */
-.sent-bar{display:flex;border-radius:14px;overflow:hidden;height:30px;margin-bottom:6px}
-.sent-seg{display:flex;align-items:center;justify-content:center;color:#fff;font-size:.78rem;font-weight:700;min-width:30px}
-.sent-pos{background:var(--navy-light)}.sent-neu{background:#64748b}.sent-neg{background:var(--error)}
-.sent-labels{display:flex;justify-content:space-between;font-size:.78rem;margin-bottom:12px}
-.c-pos{color:var(--navy-light)}.c-neu{color:#A0AEC0}.c-neg{color:var(--error)}
-.sent-assessment{font-size:.9rem;color:var(--text-sub);line-height:1.8}
+.sent-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px}
+.sent-stat{display:flex;flex-direction:column;align-items:center;padding:14px 8px;border-radius:12px;background:rgba(255,255,255,.03);border:1px solid var(--border)}
+.sent-stat--pos{border-color:rgba(59,130,246,.3);background:rgba(59,130,246,.06)}
+.sent-stat--neu{border-color:rgba(100,116,139,.3);background:rgba(100,116,139,.06)}
+.sent-stat--neg{border-color:rgba(252,129,129,.3);background:rgba(252,129,129,.06)}
+.sent-stat-val{font-size:1.6rem;font-weight:700;letter-spacing:-.5px}
+.sent-stat--pos .sent-stat-val{color:#60a5fa}
+.sent-stat--neu .sent-stat-val{color:#94a3b8}
+.sent-stat--neg .sent-stat-val{color:#fc8181}
+.sent-stat-label{font-size:.75rem;color:var(--text-sub);margin-top:4px}
+.sent-bar{display:flex;border-radius:14px;overflow:hidden;height:22px;margin-bottom:12px}
+.sent-seg{min-width:20px;transition:width .4s ease}
+.sent-pos{background:linear-gradient(90deg,#3b82f6,#60a5fa)}.sent-neu{background:#64748b}.sent-neg{background:linear-gradient(90deg,#f87171,#fc8181)}
+.sent-assessment{font-size:.9rem;color:var(--text-sub);line-height:1.8;margin-top:12px}
 
 /* ── Keywords ── */
 .kw-cloud{display:flex;flex-wrap:wrap;gap:7px}

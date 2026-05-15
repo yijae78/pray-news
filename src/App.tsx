@@ -4,7 +4,7 @@ import {
   AlertTriangle, ChevronDown, ChevronUp, RefreshCw, ExternalLink,
   Newspaper, ShieldCheck, Brain, BookOpen, ChevronRight,
   Rss, Cpu, FileText, Menu, X, TrendingUp,
-  Cross, Sparkles, Smartphone, Tablet, Monitor, Home, Zap, Download, Trash2, Clock,
+  Cross, Sparkles, Smartphone, Tablet, Monitor, Home, Zap, Download, Trash2, Clock, Search, RotateCcw, ArrowLeft,
 } from 'lucide-react';
 import type { Article, AnalysisResult, AppState, CrawlMeta, CachedReport } from './types';
 import { Chart as ChartJS, ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement } from 'chart.js';
@@ -169,7 +169,7 @@ const SECTIONS = [
   { id: 'sec-articles', icon: ExternalLink, label: '전체 기사' },
 ];
 
-type View = 'landing' | 'result';
+type View = 'landing' | 'result' | 'history';
 type DeviceMode = 'phone' | 'tablet' | 'desktop';
 type DateMode = 'single' | 'range' | 'month';
 
@@ -214,6 +214,8 @@ export default function App() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [prayerFontSize, setPrayerFontSize] = useState(1.05);
   const [historyTab, setHistoryTab] = useState<'recent'|'trash'>('recent');
+  const [historySort, setHistorySort] = useState<'newest'|'oldest'>('newest');
+  const [historySearch, setHistorySearch] = useState('');
   const isStandalone = typeof window !== 'undefined' && (window.matchMedia('(display-mode: standalone)').matches || (window.navigator as any).standalone === true);
   const isIos = typeof navigator !== 'undefined' && /iPhone|iPad|iPod/.test(navigator.userAgent);
 
@@ -808,6 +810,95 @@ export default function App() {
   };
 
   // ━━━━━━━━━━━━━━━━━━━━
+  // 기록 대시보드
+  // ━━━━━━━━━━━━━━━━━━━━
+  if (view === 'history') {
+    const allRecent = getRecentReports().filter(r => !r.isDemo);
+    const allTrash = getTrashReports();
+    const currentList = historyTab === 'recent' ? allRecent : allTrash;
+    const filtered = currentList.filter(r => {
+      if (!historySearch) return true;
+      const label = `${formatDateKR(r.date)} ${getDayOfWeek(r.date)}`;
+      return label.includes(historySearch);
+    });
+    const sorted = historySort === 'oldest' ? [...filtered].reverse() : filtered;
+
+    return (
+      <>
+        <style>{GLOBAL_CSS}</style>
+        <div className={`device-viewport device--${deviceMode}`}>
+          <div className="hist-root">
+            {/* 헤더 */}
+            <header className="hist-header">
+              <button type="button" className="hist-back" onClick={goHome}><ArrowLeft size={20} /></button>
+              <h1 className="hist-title">분석 기록</h1>
+            </header>
+
+            {/* 탭 */}
+            <div className="hist-tabs">
+              <button type="button" className={`hist-tab ${historyTab === 'recent' ? 'hist-tab--active' : ''}`} onClick={() => setHistoryTab('recent')}>
+                <Clock size={14} /> 기록 ({allRecent.length})
+              </button>
+              <button type="button" className={`hist-tab ${historyTab === 'trash' ? 'hist-tab--active' : ''}`} onClick={() => setHistoryTab('trash')}>
+                <Trash2 size={14} /> 휴지통 ({allTrash.length})
+              </button>
+            </div>
+
+            {/* 검색 + 정렬 */}
+            <div className="hist-controls">
+              <div className="hist-search-wrap">
+                <Search size={14} />
+                <input className="hist-search" placeholder="날짜 검색..." value={historySearch} onChange={e => setHistorySearch(e.target.value)} />
+              </div>
+              <button type="button" className="hist-sort" onClick={() => setHistorySort(s => s === 'newest' ? 'oldest' : 'newest')}>
+                {historySort === 'newest' ? '최신순' : '오래된순'} ↕
+              </button>
+            </div>
+
+            {/* 목록 */}
+            <div className="hist-list">
+              {sorted.length > 0 ? sorted.map(r => (
+                <div key={r.date} className="hist-card">
+                  <div className="hist-card-info" onClick={() => { if (historyTab === 'recent') loadFromHistory(r.date); }}>
+                    <span className="hist-card-date">{formatDateKR(r.date)} ({getDayOfWeek(r.date)})</span>
+                    <span className="hist-card-meta">기사 {r.articleCount}건 · {new Date(r.cachedAt).toLocaleString('ko-KR', { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' })}</span>
+                  </div>
+                  <div className="hist-card-actions">
+                    {historyTab === 'recent' ? (<>
+                      <button type="button" className="hist-btn hist-btn--view" onClick={() => loadFromHistory(r.date)}>보기</button>
+                      <button type="button" className="hist-btn hist-btn--del" onClick={() => {
+                        const raw = localStorage.getItem(`cached-report-${r.date}`);
+                        if (raw) { localStorage.setItem(`trash-report-${r.date}`, raw); localStorage.removeItem(`cached-report-${r.date}`); }
+                        flash('휴지통으로 이동');
+                      }}><Trash2 size={13} /></button>
+                    </>) : (<>
+                      <button type="button" className="hist-btn hist-btn--restore" onClick={() => { restoreFromTrash(r.date); flash('복구 완료'); }}><RotateCcw size={13} /> 복구</button>
+                      <button type="button" className="hist-btn hist-btn--del" onClick={() => { permanentDeleteFromTrash(r.date); flash('삭제 완료'); }}><Trash2 size={13} /></button>
+                    </>)}
+                  </div>
+                </div>
+              )) : (
+                <div className="hist-empty">
+                  <p>{historyTab === 'recent' ? '저장된 분석 기록이 없습니다' : '휴지통이 비어있습니다'}</p>
+                  <p className="hist-empty-sub">{historyTab === 'recent' ? '뉴스 분석을 실행하면 자동으로 저장됩니다' : '삭제된 기록이 여기에 표시됩니다'}</p>
+                </div>
+              )}
+            </div>
+
+            {/* 휴지통 비우기 */}
+            {historyTab === 'trash' && allTrash.length > 0 && (
+              <button type="button" className="hist-empty-trash" onClick={() => { emptyTrash(); flash('휴지통을 비웠습니다'); }}>
+                <Trash2 size={14} /> 휴지통 비우기
+              </button>
+            )}
+          </div>
+        </div>
+        {toast && <div className="toast">{toast}</div>}
+      </>
+    );
+  }
+
+  // ━━━━━━━━━━━━━━━━━━━━
   // 랜딩
   // ━━━━━━━━━━━━━━━━━━━━
   if (view === 'landing') return (
@@ -900,39 +991,18 @@ export default function App() {
                     <Clock size={18} /> 이전 분석 기록 {historyOpen ? '▴' : '▾'}
                   </button>
                   {historyOpen && (() => {
-                    const recent = getRecentReports();
-                    const trash = getTrashReports();
+                    const recent = getRecentReports().slice(0, 3);
                     return (
                       <div className="history-dropdown" onClick={e => e.stopPropagation()}>
-                        <div className="history-tabs">
-                          <button type="button" className={`history-tab ${historyTab === 'recent' ? 'history-tab--active' : ''}`} onClick={() => setHistoryTab('recent')}>
-                            <Clock size={13} /> 기록 ({recent.length})
+                        {recent.map(r => (
+                          <button type="button" key={r.date} className="history-card" onClick={(e) => { e.stopPropagation(); loadFromHistory(r.date, r.isDemo); setHistoryOpen(false); }}>
+                            <span className="history-date">{formatDateKR(r.date)} ({getDayOfWeek(r.date)}){r.isDemo ? ' · 샘플' : ''}</span>
+                            <span className="history-meta">기사 {r.articleCount}건 →</span>
                           </button>
-                          <button type="button" className={`history-tab ${historyTab === 'trash' ? 'history-tab--active' : ''}`} onClick={() => setHistoryTab('trash')}>
-                            <Trash2 size={13} /> 휴지통 ({trash.length})
-                          </button>
-                        </div>
-                        {historyTab === 'recent' ? (
-                          recent.map(r => (
-                            <button type="button" key={r.date} className="history-card" onClick={(e) => { e.stopPropagation(); loadFromHistory(r.date, r.isDemo); setHistoryOpen(false); }}>
-                              <span className="history-date">{formatDateKR(r.date)} ({getDayOfWeek(r.date)}){r.isDemo ? ' · 샘플' : ''}</span>
-                              <span className="history-meta">기사 {r.articleCount}건 →</span>
-                            </button>
-                          ))
-                        ) : trash.length > 0 ? (<>
-                          {trash.map(r => (
-                            <div key={r.date} className="history-card trash-card">
-                              <span className="history-date">{formatDateKR(r.date)} ({getDayOfWeek(r.date)})</span>
-                              <div className="trash-actions">
-                                <button type="button" className="trash-btn trash-btn--restore" onClick={(e) => { e.stopPropagation(); restoreFromTrash(r.date); flash('복구되었습니다'); setHistoryTab('recent'); }}>복구</button>
-                                <button type="button" className="trash-btn trash-btn--delete" onClick={(e) => { e.stopPropagation(); permanentDeleteFromTrash(r.date); flash('완전 삭제되었습니다'); }}>삭제</button>
-                              </div>
-                            </div>
-                          ))}
-                          <button type="button" className="trash-empty-btn" onClick={() => { emptyTrash(); flash('휴지통을 비웠습니다'); setHistoryTab('recent'); }}>휴지통 비우기</button>
-                        </>) : (
-                          <div className="history-empty"><p>휴지통이 비어있습니다</p></div>
-                        )}
+                        ))}
+                        <button type="button" className="history-viewall" onClick={() => { setHistoryOpen(false); setView('history'); }}>
+                          전체 기록 보기 →
+                        </button>
                       </div>
                     );
                   })()}
@@ -1609,6 +1679,91 @@ const GLOBAL_CSS = `
 .trash-empty-btn:hover{background:rgba(252,129,129,.06)}
 .history-empty{padding:20px;text-align:center}
 .history-empty p{font-size:.88rem;color:var(--text-sub);margin:0}
+.history-viewall{
+  display:block;width:100%;padding:12px;border:none;border-top:1px solid var(--border);
+  background:none;color:var(--navy);font-size:.82rem;font-weight:600;cursor:pointer;
+  transition:background .15s;text-align:center;
+}
+.history-viewall:hover{background:rgba(59,130,246,.06)}
+
+/* ── History Dashboard ── */
+.hist-root{
+  font-family:var(--font);color:var(--text);background:var(--bg);min-height:100vh;
+  padding:0 0 40px;animation:fadeIn .3s ease;
+}
+.hist-header{
+  display:flex;align-items:center;gap:12px;padding:16px 20px;
+  border-bottom:1px solid var(--border);background:var(--card);
+  position:sticky;top:0;z-index:10;
+}
+.hist-back{
+  display:flex;align-items:center;justify-content:center;
+  width:36px;height:36px;border-radius:10px;border:1px solid var(--border);
+  background:none;color:var(--text);cursor:pointer;transition:all .15s;
+}
+.hist-back:hover{border-color:var(--navy);color:var(--navy)}
+.hist-title{font-size:1.1rem;font-weight:700;margin:0}
+.hist-tabs{
+  display:flex;border-bottom:1px solid var(--border);background:var(--card);
+}
+.hist-tab{
+  flex:1;display:flex;align-items:center;justify-content:center;gap:6px;
+  padding:12px;border:none;background:none;color:var(--text-muted);
+  font-size:.85rem;font-weight:600;cursor:pointer;
+  border-bottom:2px solid transparent;transition:all .15s;
+}
+.hist-tab--active{color:var(--navy);border-bottom-color:var(--navy)}
+.hist-controls{
+  display:flex;gap:8px;padding:14px 20px;
+}
+.hist-search-wrap{
+  flex:1;display:flex;align-items:center;gap:8px;padding:8px 12px;
+  border-radius:10px;border:1px solid var(--border);background:var(--card);
+  color:var(--text-muted);
+}
+.hist-search{
+  flex:1;border:none;background:none;color:var(--text);font-size:.85rem;
+  outline:none;
+}
+.hist-search::placeholder{color:var(--text-muted)}
+.hist-sort{
+  padding:8px 14px;border-radius:10px;border:1px solid var(--border);
+  background:var(--card);color:var(--text-sub);font-size:.78rem;font-weight:600;
+  cursor:pointer;white-space:nowrap;transition:all .15s;
+}
+.hist-sort:hover{border-color:var(--navy);color:var(--navy)}
+.hist-list{padding:0 20px}
+.hist-card{
+  display:flex;justify-content:space-between;align-items:center;
+  padding:14px 16px;margin-bottom:8px;border-radius:12px;
+  border:1px solid var(--border);background:var(--card);
+  transition:all .2s ease;
+}
+.hist-card:hover{border-color:color-mix(in srgb,var(--navy) 40%,transparent)}
+.hist-card-info{flex:1;cursor:pointer}
+.hist-card-date{display:block;font-size:.9rem;font-weight:600;color:var(--text)}
+.hist-card-meta{display:block;font-size:.75rem;color:var(--text-muted);margin-top:3px}
+.hist-card-actions{display:flex;gap:6px;margin-left:12px}
+.hist-btn{
+  display:flex;align-items:center;gap:4px;padding:6px 12px;border-radius:8px;
+  border:none;font-size:.75rem;font-weight:600;cursor:pointer;transition:all .15s;
+}
+.hist-btn--view{background:rgba(59,130,246,.12);color:#60a5fa}
+.hist-btn--view:hover{background:rgba(59,130,246,.2)}
+.hist-btn--restore{background:rgba(104,211,145,.12);color:#68d391}
+.hist-btn--restore:hover{background:rgba(104,211,145,.2)}
+.hist-btn--del{background:rgba(252,129,129,.08);color:#fc8181}
+.hist-btn--del:hover{background:rgba(252,129,129,.15)}
+.hist-empty{text-align:center;padding:48px 20px}
+.hist-empty p{font-size:.95rem;color:var(--text-sub);margin:0}
+.hist-empty-sub{font-size:.8rem;color:var(--text-muted);margin-top:8px!important}
+.hist-empty-trash{
+  display:flex;align-items:center;justify-content:center;gap:6px;
+  margin:16px auto 0;padding:10px 24px;border-radius:10px;
+  border:1px solid rgba(252,129,129,.2);background:rgba(252,129,129,.06);
+  color:#fc8181;font-size:.82rem;font-weight:600;cursor:pointer;transition:all .15s;
+}
+.hist-empty-trash:hover{background:rgba(252,129,129,.12)}
 
 .hero-footer{
   position:absolute;bottom:14px;left:0;right:0;text-align:center;

@@ -825,17 +825,17 @@ export default function App() {
                   <BookOpen size={18} /> 샘플 미리보기
                 </button>
                 <div className="history-btn-wrap">
-                  <button className="btn-hero-history" onClick={() => setHistoryOpen(!historyOpen)}>
+                  <button type="button" className="btn-hero-history" onClick={() => setHistoryOpen(!historyOpen)}>
                     <Clock size={18} /> 이전 분석 기록 {historyOpen ? '▴' : '▾'}
                   </button>
                   {historyOpen && (() => {
                     const recent = getRecentReports();
                     return (
-                      <div className="history-dropdown">
+                      <div className="history-dropdown" onClick={e => e.stopPropagation()}>
                         {recent.map(r => (
-                          <button key={r.date} className="history-card" onClick={() => { loadFromHistory(r.date, r.isDemo); setHistoryOpen(false); }}>
+                          <button type="button" key={r.date} className="history-card" onClick={(e) => { e.stopPropagation(); loadFromHistory(r.date, r.isDemo); setHistoryOpen(false); }}>
                             <span className="history-date">{formatDateKR(r.date)} ({getDayOfWeek(r.date)}){r.isDemo ? ' · 샘플' : ''}</span>
-                            <span className="history-meta">기사 {r.articleCount}건</span>
+                            <span className="history-meta">기사 {r.articleCount}건 →</span>
                           </button>
                         ))}
                       </div>
@@ -1197,7 +1197,7 @@ const GLOBAL_CSS = `
 .landing-root{font-family:var(--font);color:var(--text);background:#060a14;min-height:100vh;animation:fadeIn .4s ease}
 
 .hero{
-  position:relative;overflow:visible;text-align:center;
+  position:relative;overflow:hidden;text-align:center;
   padding:80px 20px 80px;
   background:
     radial-gradient(ellipse at 30% 20%,rgba(30,64,175,0.18),transparent 50%),
@@ -1474,7 +1474,7 @@ const GLOBAL_CSS = `
 }
 .btn-hero-history:hover{border-color:var(--navy);color:var(--navy);background:rgba(59,130,246,.08)}
 .history-dropdown{
-  position:absolute;top:calc(100% + 8px);left:0;right:0;z-index:30;
+  position:absolute;bottom:calc(100% + 8px);left:0;right:0;z-index:30;
   background:var(--card);border:1px solid var(--border);border-radius:14px;
   box-shadow:0 8px 32px rgba(0,0,0,.5);overflow:hidden;
   animation:fadeUp .2s ease;max-height:300px;overflow-y:auto;

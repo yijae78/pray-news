@@ -7,7 +7,13 @@ import {
   Cross, Sparkles, Smartphone, Tablet, Monitor, Home, Zap, Download, Trash2,
 } from 'lucide-react';
 import type { Article, AnalysisResult, AppState, CrawlMeta, CachedReport } from './types';
+import { Chart as ChartJS, ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement } from 'chart.js';
+import { Doughnut, Bar } from 'react-chartjs-2';
 import rawDemoData from './demo-data.json';
+
+ChartJS.register(ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement);
+ChartJS.defaults.color = '#94a3b8';
+ChartJS.defaults.borderColor = '#2d3748';
 
 // ── 오늘 날짜 ──
 const TODAY = (() => {
@@ -106,6 +112,9 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [catTab, setCatTab] = useState(0);
   const [prayerTab, setPrayerTab] = useState<'personal' | 'communal' | 'wednesday'>('personal');
+  const [articleSearch, setArticleSearch] = useState('');
+  const [articleSourceFilter, setArticleSourceFilter] = useState('all');
+  const [articleSentFilter, setArticleSentFilter] = useState('all');
   const [deviceMode, setDeviceMode] = useState<DeviceMode>(() => {
     if (typeof window === 'undefined') return 'phone';
     const w = window.innerWidth;
@@ -114,6 +123,7 @@ export default function App() {
     return 'phone';
   });
   const prayerRef = useRef<HTMLDivElement>(null);
+  const showDeviceToggle = import.meta.env.DEV || (typeof localStorage !== 'undefined' && localStorage.getItem('dev-mode') === '1');
   const [installPrompt, setInstallPrompt] = useState<any>(null);
   const [showInstallBanner, setShowInstallBanner] = useState(false);
   const [showIosGuide, setShowIosGuide] = useState(false);
@@ -241,16 +251,23 @@ export default function App() {
       const allFailed: string[] = [];
       let anyPartial = false;
 
-      for (const d of dates) {
-        const r1 = await fetch('/api/crawl', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ date: d }) });
-        if (!r1.ok) continue;
-        const d1 = await r1.json();
-        allArticles.push(...d1.articles);
-        totalFetched += d1.meta.totalFetched;
-        totalCult += d1.meta.filteredCult;
-        totalDup += d1.meta.filteredDuplicate;
-        if (d1.meta.failedFeeds) allFailed.push(...d1.meta.failedFeeds);
-        if (d1.meta.isPartial) anyPartial = true;
+      const crawlResults = await Promise.allSettled(
+        dates.map(async (d) => {
+          const r = await fetch('/api/crawl', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ date: d }) });
+          if (!r.ok) throw new Error('fail');
+          return r.json();
+        })
+      );
+      for (const result of crawlResults) {
+        if (result.status === 'fulfilled') {
+          const d1 = result.value;
+          allArticles.push(...d1.articles);
+          totalFetched += d1.meta.totalFetched;
+          totalCult += d1.meta.filteredCult;
+          totalDup += d1.meta.filteredDuplicate;
+          if (d1.meta.failedFeeds) allFailed.push(...d1.meta.failedFeeds);
+          if (d1.meta.isPartial) anyPartial = true;
+        }
       }
 
       // 중복 제거 (다른 날짜에서 같은 기사 수집 가능)
@@ -301,8 +318,7 @@ export default function App() {
     triggerDownload(blob, `기도문_${label}_${date}.txt`);
   }
 
-  function downloadAsImage(text: string, type: string, fmt: 'png' | 'jpg') {
-    const label = getLabel(type);
+  function createPrayerCanvas(text: string, titleText: string): HTMLCanvasElement {
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d')!;
     const padding = 60; const lineH = 36; const maxW = 700;
@@ -310,67 +326,45 @@ export default function App() {
     const lines = wrapText(ctx, text, maxW, '18px "Noto Sans KR", sans-serif');
     const titleH = 70;
     canvas.height = titleH + lines.length * lineH + padding * 2;
-    // Background
     ctx.fillStyle = '#FFF8E7'; ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.fillStyle = '#1E40AF'; ctx.fillRect(0, 0, canvas.width, 4);
-    // Title
     ctx.font = 'bold 22px "Noto Sans KR", sans-serif'; ctx.fillStyle = '#1E3A5F';
-    ctx.fillText(`${formatDateKR(date)} ${label}`, padding, padding + 28);
+    ctx.fillText(titleText, padding, padding + 28);
     ctx.strokeStyle = '#E8D5A3'; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(padding, padding + 45); ctx.lineTo(canvas.width - padding, padding + 45); ctx.stroke();
-    // Body
     ctx.font = '18px "Noto Sans KR", sans-serif'; ctx.fillStyle = '#1A1A1A';
     lines.forEach((line, i) => ctx.fillText(line, padding, titleH + padding + i * lineH));
-    // Export
+    return canvas;
+  }
+
+  function downloadAsImage(text: string, type: string, fmt: 'png' | 'jpg') {
+    const label = getLabel(type);
+    const canvas = createPrayerCanvas(text, `${formatDateKR(date)} ${label}`);
     const mime = fmt === 'png' ? 'image/png' : 'image/jpeg';
     canvas.toBlob(blob => { if (blob) triggerDownload(blob, `기도문_${label}_${date}.${fmt}`); }, mime, 0.95);
   }
 
-  function downloadAsPdf(text: string, type: string) {
+  async function downloadAsPdf(text: string, type: string) {
     const label = getLabel(type);
-    const title = `${formatDateKR(date)} ${label}`;
-    const lines = text.split('\n');
-    // Simple PDF generation
-    const ptPerLine = 20; const margin = 50; const pageW = 595; const pageH = 842;
-    const contentW = pageW - margin * 2;
-    const allLines: string[] = [];
-    lines.forEach(l => { if (l.length === 0) { allLines.push(''); } else { for (let i = 0; i < l.length; i += 35) allLines.push(l.slice(i, i + 35)); } });
-    const totalH = margin + 60 + allLines.length * ptPerLine + margin;
-    const pages = Math.ceil(totalH / pageH) || 1;
-
-    let pdf = '%PDF-1.4\\n';
-    const offsets: number[] = [];
-    let objNum = 1;
-    const addObj = (content: string) => { offsets.push(pdf.length); pdf += `${objNum} 0 obj\\n${content}\\nendobj\\n`; objNum++; };
-
-    // 1: Catalog
-    addObj('<< /Type /Catalog /Pages 2 0 R >>');
-    // 2: Pages (placeholder)
-    const pagesObjIdx = offsets.length;
-    addObj(`<< /Type /Pages /Kids [3 0 R] /Count 1 >>`);
-    // 3: Page
-    addObj(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pageW} ${pageH}] /Contents 5 0 R /Resources << /Font << /F1 4 0 R >> >> >>`);
-    // 4: Font
-    addObj('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>');
-    // 5: Content stream
-    let stream = `BT /F1 20 Tf ${margin} ${pageH - margin - 20} Td (${escPdf(title)}) Tj ET\\n`;
-    stream += `${margin} ${pageH - margin - 40} m ${pageW - margin} ${pageH - margin - 40} l 0.8 0.8 0.8 RG 0.5 w S\\n`;
-    let y = pageH - margin - 70;
-    allLines.forEach(line => {
-      if (y < margin) { y = pageH - margin - 20; }
-      stream += `BT /F1 11 Tf ${margin} ${y} Td (${escPdf(line)}) Tj ET\\n`;
-      y -= ptPerLine;
-    });
-    const streamBytes = new TextEncoder().encode(stream);
-    addObj(`<< /Length ${streamBytes.length} >>\\nstream\\n${stream}endstream`);
-
-    const xrefOffset = pdf.length;
-    pdf += `xref\\n0 ${objNum}\\n0000000000 65535 f \\n`;
-    offsets.forEach(o => pdf += `${String(o).padStart(10, '0')} 00000 n \\n`);
-    pdf += `trailer << /Size ${objNum} /Root 1 0 R >>\\nstartxref\\n${xrefOffset}\\n%%EOF`;
-
-    const blob = new Blob([pdf], { type: 'application/pdf' });
-    triggerDownload(blob, `기도문_${label}_${date}.pdf`);
+    const canvas = createPrayerCanvas(text, `${formatDateKR(date)} ${label}`);
+    const { jsPDF } = await import('jspdf');
+    const imgData = canvas.toDataURL('image/jpeg', 0.95);
+    const pageW = 595; const pageH = 842;
+    const scale = pageW / canvas.width;
+    const scaledH = canvas.height * scale;
+    const totalPages = Math.ceil(scaledH / pageH);
+    const pdf = new jsPDF({ unit: 'px', format: [pageW, pageH] });
+    for (let p = 0; p < totalPages; p++) {
+      if (p > 0) pdf.addPage();
+      const srcY = p * (pageH / scale);
+      const srcH = Math.min(pageH / scale, canvas.height - srcY);
+      const tmp = document.createElement('canvas');
+      tmp.width = canvas.width; tmp.height = srcH;
+      tmp.getContext('2d')!.drawImage(canvas, 0, srcY, canvas.width, srcH, 0, 0, canvas.width, srcH);
+      pdf.addImage(tmp.toDataURL('image/jpeg', 0.92), 'JPEG', 0, 0, pageW, srcH * scale);
+    }
+    pdf.save(`기도문_${label}_${date}.pdf`);
+    flash('다운로드 완료'); setDlMenuOpen(false);
   }
 
   function triggerDownload(blob: Blob, filename: string) {
@@ -378,10 +372,6 @@ export default function App() {
     const a = document.createElement('a'); a.href = url; a.download = filename;
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     URL.revokeObjectURL(url); flash('다운로드 완료'); setDlMenuOpen(false);
-  }
-
-  function escPdf(s: string) {
-    return s.replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)');
   }
 
   function wrapText(ctx: CanvasRenderingContext2D, text: string, maxW: number, font: string): string[] {
@@ -398,6 +388,58 @@ export default function App() {
       if (line) result.push(line);
     });
     return result;
+  }
+
+  async function downloadFullReport() {
+    if (!analysis || !meta) return;
+    const dl = getDateLabel();
+    let r = `기도로 읽는 뉴스 — AI 분석 보고서\n분석 날짜: ${dl}\n${'═'.repeat(40)}\n\n`;
+    r += `【1. 수집 현황】\n수집 ${meta.finalCount}건 / 이단 차단 ${meta.filteredCult}건 / 중복 제거 ${meta.filteredDuplicate}건\n`;
+    analysis.stats.forEach(s => r += `  · ${s.source}: ${s.count}건\n`);
+    r += `\n【2. 주요 이슈】\n`;
+    analysis.summary.forEach((iss, i) => r += `${i + 1}. ${iss.title}\n   ${iss.description}\n\n`);
+    r += `【3. 카테고리 분류】\n`;
+    analysis.categories.forEach(c => { r += `▸ ${c.name} (${c.articles.length}건)\n`; c.articles.forEach(a => r += `  - ${a.title}\n`); r += `\n`; });
+    r += `【4. 긍정·부정 평가】\n긍정 ${analysis.sentiment.overall.positive}% / 중립 ${analysis.sentiment.overall.neutral}% / 부정 ${analysis.sentiment.overall.negative}%\n${analysis.sentiment.overallAssessment}\n\n`;
+    r += `【5. 핵심 키워드】\n`;
+    analysis.keywords.forEach(k => r += `  · ${k.word} (${k.count}회)\n`);
+    r += `\n【6. 미래 전망】\n[단기 1~2주] ${analysis.prediction.shortTerm}\n[중기 1~3개월] ${analysis.prediction.midTerm}\n\n`;
+    r += `【7. 기도문 — 개인기도】\n${analysis.prayer.personal}\n\n`;
+    r += `【7. 기도문 — 공동기도】\n${analysis.prayer.communal}\n\n`;
+    r += `【7. 기도문 — 수요기도회】\n${analysis.prayer.wednesday}\n`;
+    const { jsPDF } = await import('jspdf');
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d')!;
+    const padding = 50; const lineH = 28; const maxW = 680;
+    canvas.width = maxW + padding * 2;
+    const lines = wrapText(ctx, r, maxW, '14px "Noto Sans KR", sans-serif');
+    canvas.height = Math.max(842, lines.length * lineH + padding * 2 + 60);
+    ctx.fillStyle = '#FFF8E7'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#1E40AF'; ctx.fillRect(0, 0, canvas.width, 4);
+    ctx.font = 'bold 20px "Noto Sans KR", sans-serif'; ctx.fillStyle = '#1E3A5F';
+    ctx.fillText(`기도로 읽는 뉴스 — ${dl} 분석 보고서`, padding, padding + 24);
+    ctx.strokeStyle = '#E8D5A3'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(padding, padding + 40); ctx.lineTo(canvas.width - padding, padding + 40); ctx.stroke();
+    lines.forEach((line, i) => {
+      if (line.startsWith('【')) { ctx.font = 'bold 15px "Noto Sans KR", sans-serif'; ctx.fillStyle = '#1E40AF'; }
+      else { ctx.font = '14px "Noto Sans KR", sans-serif'; ctx.fillStyle = '#1A1A1A'; }
+      ctx.fillText(line, padding, 60 + padding + i * lineH);
+    });
+    const pageH = 842; const pageW = 595;
+    const sc = pageW / canvas.width;
+    const totalPages = Math.ceil((canvas.height * sc) / pageH);
+    const pdf = new jsPDF({ unit: 'px', format: [pageW, pageH] });
+    for (let p = 0; p < totalPages; p++) {
+      if (p > 0) pdf.addPage();
+      const srcY = p * (pageH / sc);
+      const srcH = Math.min(pageH / sc, canvas.height - srcY);
+      const tmp = document.createElement('canvas');
+      tmp.width = canvas.width; tmp.height = srcH;
+      tmp.getContext('2d')!.drawImage(canvas, 0, srcY, canvas.width, srcH, 0, 0, canvas.width, srcH);
+      pdf.addImage(tmp.toDataURL('image/jpeg', 0.92), 'JPEG', 0, 0, pageW, srcH * sc);
+    }
+    pdf.save(`분석보고서_${dl.replace(/\s/g, '_')}.pdf`);
+    flash('보고서 다운로드 완료');
   }
 
   // ── 디바이스 토글 ──
@@ -429,6 +471,16 @@ export default function App() {
               </div>
               {meta.filteredDuplicate > 0 && <p className="stat-note">중복 기사 {meta.filteredDuplicate}건 제거</p>}
               {meta.failedFeeds.length > 0 && <p className="stat-note muted">연결 실패: {meta.failedFeeds.slice(0, 5).join(', ')}{meta.failedFeeds.length > 5 && ` 외 ${meta.failedFeeds.length - 5}개`}</p>}
+              <div style={{ maxHeight: 280, marginTop: 14 }}>
+                <Bar data={{
+                  labels: analysis.stats.map(s => s.source),
+                  datasets: [{ label: '기사 수', data: analysis.stats.map(s => s.count),
+                    backgroundColor: 'rgba(59,130,246,.6)', borderRadius: 6, borderSkipped: false }]
+                }} options={{ indexAxis: 'y' as const, responsive: true, maintainAspectRatio: false,
+                  plugins: { legend: { display: false } },
+                  scales: { x: { grid: { color: '#2d3748' } }, y: { grid: { display: false } } }
+                }} />
+              </div>
             </div>
           </section>
         );
@@ -485,6 +537,13 @@ export default function App() {
                 {analysis.sentiment.overall.negative > 0 && <div className="sent-seg sent-neg" style={{ width: `${analysis.sentiment.overall.negative}%` }}>{analysis.sentiment.overall.negative}%</div>}
               </div>
               <div className="sent-labels"><span className="c-pos">긍정</span><span className="c-neu">중립</span><span className="c-neg">부정</span></div>
+              <div style={{ maxWidth: 220, margin: '16px auto' }}>
+                <Doughnut data={{
+                  labels: ['긍정', '중립', '부정'],
+                  datasets: [{ data: [analysis.sentiment.overall.positive, analysis.sentiment.overall.neutral, analysis.sentiment.overall.negative],
+                    backgroundColor: ['#3b82f6', '#64748b', '#fc8181'], borderWidth: 0 }]
+                }} options={{ plugins: { legend: { position: 'bottom' as const, labels: { padding: 14, usePointStyle: true, pointStyle: 'circle' } } } }} />
+              </div>
               <p className="sent-assessment">{analysis.sentiment.overallAssessment}</p>
             </div>
           </section>
@@ -500,6 +559,16 @@ export default function App() {
                   {kw.word}<span className="kw-count">({kw.count})</span>
                 </span>
               ))}</div>
+              <div style={{ maxHeight: 280, marginTop: 14 }}>
+                <Bar data={{
+                  labels: analysis.keywords.map(k => k.word),
+                  datasets: [{ label: '등장 횟수', data: analysis.keywords.map(k => k.count),
+                    backgroundColor: 'rgba(212,160,23,.6)', borderRadius: 6, borderSkipped: false }]
+                }} options={{ indexAxis: 'y' as const, responsive: true, maintainAspectRatio: false,
+                  plugins: { legend: { display: false } },
+                  scales: { x: { grid: { color: '#2d3748' } }, y: { grid: { display: false } } }
+                }} />
+              </div>
             </div>
           </section>
         );
@@ -545,16 +614,39 @@ export default function App() {
           </section>
         );
 
-      case 'sec-articles':
+      case 'sec-articles': {
+        const sources = [...new Set(articles.map(a => a.source))];
+        const filtered = articles.filter(a => {
+          if (articleSearch && !a.title.toLowerCase().includes(articleSearch.toLowerCase()) && !a.description?.toLowerCase().includes(articleSearch.toLowerCase())) return false;
+          if (articleSourceFilter !== 'all' && a.source !== articleSourceFilter) return false;
+          if (articleSentFilter !== 'all') {
+            const s = analysis.sentiment.articles.find(x => x.id === a.id);
+            if (s?.sentiment !== articleSentFilter) return false;
+          }
+          return true;
+        });
         return (
           <section className="result-section anim-fadeUp" key="articles">
             <STitle n={8}>전체 기사 목록</STitle>
             <div className="card">
-              <p className="article-count">총 {articles.length}건의 기사</p>
+              <div className="article-filters">
+                <input className="article-search" placeholder="기사 제목 검색..." value={articleSearch} onChange={e => setArticleSearch(e.target.value)} />
+                <select className="article-select" value={articleSourceFilter} onChange={e => setArticleSourceFilter(e.target.value)}>
+                  <option value="all">전체 매체</option>
+                  {sources.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+                <select className="article-select" value={articleSentFilter} onChange={e => setArticleSentFilter(e.target.value)}>
+                  <option value="all">전체 감성</option>
+                  <option value="positive">긍정</option>
+                  <option value="neutral">중립</option>
+                  <option value="negative">부정</option>
+                </select>
+              </div>
+              <p className="article-count">{filtered.length === articles.length ? `총 ${articles.length}건의 기사` : `검색 결과 ${filtered.length}건 (전체 ${articles.length}건)`}</p>
               <div className="article-table-wrap">
                 <table className="article-table">
                   <thead><tr><th>제목</th><th style={{ width: 72 }}>매체</th><th style={{ width: 46 }}>감성</th><th style={{ width: 32 }}>↗</th></tr></thead>
-                  <tbody>{articles.map(a => {
+                  <tbody>{filtered.map(a => {
                     const s = analysis.sentiment.articles.find(x => x.id === a.id);
                     return (
                       <tr key={a.id}>
@@ -567,9 +659,11 @@ export default function App() {
                   })}</tbody>
                 </table>
               </div>
+              {filtered.length === 0 && <p style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '20px 0', fontSize: '.88rem' }}>검색 결과가 없습니다</p>}
             </div>
           </section>
         );
+      }
 
       default: return null;
     }
@@ -581,7 +675,7 @@ export default function App() {
   if (view === 'landing') return (
     <>
       <style>{GLOBAL_CSS}</style>
-      <DeviceToggle />
+      {showDeviceToggle && <DeviceToggle />}
       <div className={`device-viewport device--${deviceMode}`}>
         <div className="landing-root">
           <section className="hero hero--full">
@@ -745,7 +839,7 @@ export default function App() {
   return (
     <>
       <style>{GLOBAL_CSS}</style>
-      <DeviceToggle />
+      {showDeviceToggle && <DeviceToggle />}
       <div className={`device-viewport device--${deviceMode}`}>
         <div className="result-root">
           {/* AppBar */}
@@ -763,6 +857,11 @@ export default function App() {
             <div className="appbar-right">
               {isDemo && <span className="appbar-demo-badge">SAMPLE</span>}
               <span className="appbar-date">{dateMode === 'single' ? `${formatDateKR(date)} (${getDayOfWeek(date)})` : getDateLabel()}</span>
+              {state === 'done' && !isDemo && (
+                <button className="appbar-report-btn" onClick={downloadFullReport} title="전체 보고서 PDF">
+                  <FileText size={15} />
+                </button>
+              )}
               {state === 'done' && !isDemo && (
                 <button className="appbar-clear-btn" onClick={clearReport} title="결과 삭제">
                   <Trash2 size={15} />
@@ -853,6 +952,7 @@ export default function App() {
 
               {/* Progress */}
               {(state === 'crawling' || state === 'analyzing') && (
+                <>
                 <div className="card progress-card">
                   <div className="progress-steps">
                     <StepIndicator active={state === 'crawling'} done={state === 'analyzing'} text="뉴스를 수집하고 있습니다" doneText="뉴스 수집 완료" />
@@ -860,6 +960,10 @@ export default function App() {
                   </div>
                   <p className="progress-hint">보통 10~20초 정도 걸립니다</p>
                 </div>
+                <div className="skel-preview">
+                  <div className="skel-card"><div className="skel skel-title" /><div className={`kpi-grid ${deviceMode !== 'phone' ? 'kpi-grid--wide' : ''}`}><div className="skel skel-kpi" /><div className="skel skel-kpi" /><div className="skel skel-kpi" /></div><div className="skel skel-chart" /><div className="skel skel-text" /><div className="skel skel-text" /><div className="skel skel-text skel-text--short" /></div>
+                </div>
+                </>
               )}
 
               {/* Error */}
@@ -925,7 +1029,7 @@ function StepIndicator({ active, done, text, doneText }: { active: boolean; done
   return (
     <div className="step-ind">
       {done ? (
-        <div className="step-done"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#276749" strokeWidth={3} strokeLinecap="round"><path d="M5 13l4 4L19 7" /></svg></div>
+        <div className="step-done"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#68d391" strokeWidth={3} strokeLinecap="round"><path d="M5 13l4 4L19 7" /></svg></div>
       ) : active ? (
         <Loader2 size={24} className="spin step-spin" />
       ) : <div className="step-idle" />}
@@ -942,18 +1046,18 @@ const GLOBAL_CSS = `
 /* ── Reset & Tokens ── */
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
-  --bg:#F8F6F1; --card:#FFFFFF; --navy:#1E3A5F; --navy-light:#2C5282;
-  --gold:#B8860B; --gold-glow:rgba(184,134,11,0.25);
-  --ocean:#1E40AF; --ocean-glow:rgba(30,64,175,0.3);
-  --text:#1A1A1A; --text-sub:#4A4A4A; --text-muted:#8A8A8A;
-  --prayer-bg:#FFF8E7; --prayer-border:#E8D5A3;
-  --border:#E2DED6; --border-hover:#CBC7BD;
-  --error:#C53030; --success:#276749;
+  --bg:#0f1117; --card:#1a1f2e; --navy:#60a5fa; --navy-light:#93c5fd;
+  --gold:#d4a017; --gold-glow:rgba(212,160,23,0.25);
+  --ocean:#3b82f6; --ocean-glow:rgba(59,130,246,0.3);
+  --text:#e2e8f0; --text-sub:#94a3b8; --text-muted:#64748b;
+  --prayer-bg:#1a1f2e; --prayer-border:#2d3a50;
+  --border:#2d3748; --border-hover:#4a5568;
+  --error:#fc8181; --success:#68d391;
   --radius:14px; --radius-sm:10px; --radius-xl:20px;
-  --shadow-sm:0 1px 3px rgba(0,0,0,0.06);
-  --shadow:0 2px 12px rgba(0,0,0,0.08);
-  --shadow-md:0 4px 24px rgba(0,0,0,0.10);
-  --shadow-lg:0 8px 40px rgba(0,0,0,0.14);
+  --shadow-sm:0 1px 3px rgba(0,0,0,0.3);
+  --shadow:0 2px 12px rgba(0,0,0,0.4);
+  --shadow-md:0 4px 24px rgba(0,0,0,0.5);
+  --shadow-lg:0 8px 40px rgba(0,0,0,0.6);
   --shadow-glow:0 0 24px var(--gold-glow);
   --transition:250ms cubic-bezier(.4,0,.2,1);
   --font:'Noto Sans KR',sans-serif;
@@ -1004,7 +1108,7 @@ const GLOBAL_CSS = `
 /* ══════════════════════════════
    LANDING / HERO (Deep Ocean)
    ══════════════════════════════ */
-.landing-root{font-family:var(--font);color:var(--text);background:#060a14;min-height:100vh}
+.landing-root{font-family:var(--font);color:var(--text);background:#060a14;min-height:100vh;animation:fadeIn .4s ease}
 
 .hero{
   position:relative;overflow:hidden;text-align:center;
@@ -1283,7 +1387,7 @@ const GLOBAL_CSS = `
 /* ══════════════════════════════
    RESULT LAYOUT
    ══════════════════════════════ */
-.result-root{font-family:var(--font);color:var(--text);background:var(--bg);min-height:100vh}
+.result-root{font-family:var(--font);color:var(--text);background:var(--bg);min-height:100vh;animation:fadeIn .4s ease}
 
 /* AppBar */
 .appbar{
@@ -1437,15 +1541,15 @@ const GLOBAL_CSS = `
 .progress-steps{display:flex;flex-direction:column;gap:12px}
 .progress-hint{margin-top:14px;text-align:center;font-size:.82rem;color:var(--text-muted)}
 .step-ind{display:flex;align-items:center;gap:10px}
-.step-done{width:24px;height:24px;border-radius:50%;background:#F0FFF4;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.step-done{width:24px;height:24px;border-radius:50%;background:rgba(104,211,145,.15);display:flex;align-items:center;justify-content:center;flex-shrink:0}
 .step-spin{color:var(--navy);flex-shrink:0}
-.step-idle{width:24px;height:24px;border-radius:50%;background:#E2E8F0;flex-shrink:0}
+.step-idle{width:24px;height:24px;border-radius:50%;background:rgba(100,116,139,.2);flex-shrink:0}
 .step-text{font-size:.95rem;color:var(--text-sub)}
 .step-text--done{color:var(--success)}
 .step-text--active{color:var(--navy);font-weight:700}
 
 /* Error */
-.error-card{display:flex;align-items:flex-start;gap:10px;border-color:#FED7D7;background:#FFF5F5;animation:fadeUp .5s ease}
+.error-card{display:flex;align-items:flex-start;gap:10px;border-color:rgba(252,129,129,.2);background:rgba(252,129,129,.08);animation:fadeUp .5s ease}
 .error-card>svg{color:var(--error);flex-shrink:0;margin-top:2px}
 .error-text{font-size:.95rem;color:var(--error);line-height:1.5}
 .error-retry{
@@ -1457,10 +1561,10 @@ const GLOBAL_CSS = `
 /* Warning */
 .warning-banner{
   display:flex;align-items:flex-start;gap:8px;
-  background:#FFFFF0;border:1px solid #FEFCBF;border-radius:var(--radius-sm);padding:10px 14px;margin-bottom:16px;
+  background:rgba(212,160,23,.08);border:1px solid rgba(212,160,23,.2);border-radius:var(--radius-sm);padding:10px 14px;margin-bottom:16px;
 }
-.warning-banner>svg{color:#B7791F;flex-shrink:0;margin-top:2px}
-.warning-banner>span{font-size:.85rem;color:#744210;line-height:1.5}
+.warning-banner>svg{color:#d4a017;flex-shrink:0;margin-top:2px}
+.warning-banner>span{font-size:.85rem;color:#d4a017;line-height:1.5}
 
 /* Results container */
 .results{animation:fadeUp .4s ease}
@@ -1510,7 +1614,7 @@ const GLOBAL_CSS = `
 
 /* ── Issues ── */
 .issue-hero{
-  background:linear-gradient(135deg,#F0F4FF,#EBF0FF);
+  background:linear-gradient(135deg,rgba(30,64,175,.12),rgba(59,130,246,.08));
   border-left:4px solid #1E40AF;border-radius:var(--radius);
   padding:18px;margin-bottom:12px;
   box-shadow:var(--shadow-sm);transition:all var(--transition);
@@ -1542,7 +1646,7 @@ const GLOBAL_CSS = `
 /* ── Sentiment ── */
 .sent-bar{display:flex;border-radius:14px;overflow:hidden;height:30px;margin-bottom:6px}
 .sent-seg{display:flex;align-items:center;justify-content:center;color:#fff;font-size:.78rem;font-weight:700;min-width:30px}
-.sent-pos{background:var(--navy-light)}.sent-neu{background:#A0AEC0}.sent-neg{background:var(--error)}
+.sent-pos{background:var(--navy-light)}.sent-neu{background:#64748b}.sent-neg{background:var(--error)}
 .sent-labels{display:flex;justify-content:space-between;font-size:.78rem;margin-bottom:12px}
 .c-pos{color:var(--navy-light)}.c-neu{color:#A0AEC0}.c-neg{color:var(--error)}
 .sent-assessment{font-size:.9rem;color:var(--text-sub);line-height:1.8}
@@ -1663,4 +1767,45 @@ const GLOBAL_CSS = `
 .device--phone .hero-steps{gap:4px}
 .device--phone .hero-step{font-size:.7rem;padding:5px 10px}
 .device--phone .content{padding:14px 12px 80px}
+
+/* ══════════════════════════════
+   SKELETON
+   ══════════════════════════════ */
+@keyframes shimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}
+.skel{background:linear-gradient(90deg,#1a1f2e 25%,#252d3d 50%,#1a1f2e 75%);background-size:200% 100%;animation:shimmer 1.5s ease infinite;border-radius:8px}
+.skel-title{height:22px;width:55%;margin-bottom:14px}
+.skel-text{height:14px;margin-bottom:8px}
+.skel-text--short{width:40%}
+.skel-chart{height:180px;margin:12px 0;border-radius:10px}
+.skel-kpi{height:70px;border-radius:10px}
+.skel-card{padding:18px;border-radius:var(--radius);border:1px solid var(--border);margin-top:14px}
+.skel-preview{animation:fadeUp .4s ease}
+
+/* ══════════════════════════════
+   ARTICLE FILTERS
+   ══════════════════════════════ */
+.article-filters{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap}
+.article-search{
+  flex:1;min-width:140px;min-height:36px;padding:0 12px;border-radius:8px;
+  border:1px solid var(--border);background:var(--bg);color:var(--text);
+  font-size:.82rem;outline:none;transition:border-color var(--transition);
+}
+.article-search:focus{border-color:var(--ocean)}
+.article-search::placeholder{color:var(--text-muted)}
+.article-select{
+  min-height:36px;padding:0 10px;border-radius:8px;
+  border:1px solid var(--border);background:var(--bg);color:var(--text);
+  font-size:.78rem;cursor:pointer;outline:none;
+}
+.article-select:focus{border-color:var(--ocean)}
+
+/* ══════════════════════════════
+   REPORT BUTTON
+   ══════════════════════════════ */
+.appbar-report-btn{
+  background:rgba(212,160,23,.12);border:1px solid rgba(212,160,23,.25);
+  color:rgba(212,160,23,.9);cursor:pointer;padding:5px 7px;border-radius:8px;
+  display:flex;align-items:center;transition:all .2s;
+}
+.appbar-report-btn:hover{background:rgba(212,160,23,.25);border-color:rgba(212,160,23,.5)}
 `;

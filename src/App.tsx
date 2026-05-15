@@ -207,7 +207,7 @@ export default function App() {
   });
   const prayerRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
-  const showDeviceToggle = import.meta.env.DEV || (typeof localStorage !== 'undefined' && localStorage.getItem('dev-mode') === '1');
+  const showDeviceToggle = true;
   const [installPrompt, setInstallPrompt] = useState<any>(null);
   const [showInstallBanner, setShowInstallBanner] = useState(false);
   const [showIosGuide, setShowIosGuide] = useState(false);

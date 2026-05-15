@@ -87,8 +87,10 @@ function getCachedReport(date: string): CachedReport | null {
   } catch { return null; }
 }
 
-function getRecentReports(): { date: string; articleCount: number; cachedAt: number }[] {
-  const reports: { date: string; articleCount: number; cachedAt: number }[] = [];
+const DEMO_DATE = '2026-05-12';
+
+function getRecentReports(): { date: string; articleCount: number; cachedAt: number; isDemo?: boolean }[] {
+  const reports: { date: string; articleCount: number; cachedAt: number; isDemo?: boolean }[] = [];
   try {
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
@@ -100,7 +102,12 @@ function getRecentReports(): { date: string; articleCount: number; cachedAt: num
       reports.push({ date: cached.date, articleCount: cached.articles?.length ?? 0, cachedAt: cached.cachedAt });
     }
   } catch {}
-  return reports.sort((a, b) => b.cachedAt - a.cachedAt).slice(0, 7);
+  const sorted = reports.sort((a, b) => b.cachedAt - a.cachedAt).slice(0, 7);
+  // 캐시가 없으면 데모 샘플을 기본으로 표시
+  if (sorted.length === 0) {
+    sorted.push({ date: DEMO_DATE, articleCount: DEMO_ARTICLES.length, cachedAt: Date.now(), isDemo: true });
+  }
+  return sorted;
 }
 
 function saveCachedReport(date: string, articles: Article[], analysis: AnalysisResult, meta: CrawlMeta) {
@@ -160,6 +167,7 @@ export default function App() {
   const [installPrompt, setInstallPrompt] = useState<any>(null);
   const [showInstallBanner, setShowInstallBanner] = useState(false);
   const [showIosGuide, setShowIosGuide] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const isStandalone = typeof window !== 'undefined' && (window.matchMedia('(display-mode: standalone)').matches || (window.navigator as any).standalone === true);
   const isIos = typeof navigator !== 'undefined' && /iPhone|iPad|iPod/.test(navigator.userAgent);
 
@@ -211,7 +219,8 @@ export default function App() {
     setMeta(null); setIsDemo(false); setError(null); setSidebarOpen(false);
   }
 
-  function loadFromHistory(reportDate: string) {
+  function loadFromHistory(reportDate: string, isDemo?: boolean) {
+    if (isDemo) { enterDemo(); return; }
     const cached = getCachedReport(reportDate);
     if (!cached) return;
     setDate(reportDate);
@@ -815,6 +824,24 @@ export default function App() {
                 <button className="btn-hero-secondary" onClick={enterDemo}>
                   <BookOpen size={18} /> 샘플 미리보기
                 </button>
+                <div className="history-btn-wrap">
+                  <button className="btn-hero-history" onClick={() => setHistoryOpen(!historyOpen)}>
+                    <Clock size={18} /> 이전 분석 기록 {historyOpen ? '▴' : '▾'}
+                  </button>
+                  {historyOpen && (() => {
+                    const recent = getRecentReports();
+                    return (
+                      <div className="history-dropdown">
+                        {recent.map(r => (
+                          <button key={r.date} className="history-card" onClick={() => { loadFromHistory(r.date, r.isDemo); setHistoryOpen(false); }}>
+                            <span className="history-date">{formatDateKR(r.date)} ({getDayOfWeek(r.date)}){r.isDemo ? ' · 샘플' : ''}</span>
+                            <span className="history-meta">기사 {r.articleCount}건</span>
+                          </button>
+                        ))}
+                      </div>
+                    );
+                  })()}
+                </div>
               </div>
 
               <p className="hero-disclaimer">
@@ -887,20 +914,6 @@ export default function App() {
             </footer>
           </section>
 
-          {/* 최근 분석 기록 — hero 밖, landing-root 안 */}
-          {(() => { const recent = getRecentReports(); return recent.length > 0 ? (
-            <section className="history-section">
-              <h3 className="history-title"><Clock size={16} /> 최근 분석 기록</h3>
-              <div className="history-list">
-                {recent.map(r => (
-                  <button key={r.date} className="history-card" onClick={() => loadFromHistory(r.date)}>
-                    <span className="history-date">{formatDateKR(r.date)} ({getDayOfWeek(r.date)})</span>
-                    <span className="history-meta">기사 {r.articleCount}건 · {new Date(r.cachedAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}</span>
-                  </button>
-                ))}
-              </div>
-            </section>
-          ) : null; })()}
         </div>
       </div>
     </>
@@ -1451,26 +1464,33 @@ const GLOBAL_CSS = `
 }
 .ios-guide-close:hover{opacity:.9}
 
-/* ── History Section ── */
-.history-section{
-  position:relative;z-index:2;max-width:480px;margin:0 auto;padding:32px 24px 40px;
-  background:var(--bg);
-  animation:fadeUp .5s ease both;
+/* ── History Button & Dropdown ── */
+.history-btn-wrap{position:relative;width:100%}
+.btn-hero-history{
+  display:flex;align-items:center;justify-content:center;gap:8px;
+  width:100%;min-height:46px;border-radius:14px;font-size:.92rem;font-weight:600;
+  border:1px solid rgba(148,163,184,.25);background:rgba(148,163,184,.08);
+  color:var(--text-sub);cursor:pointer;transition:all .2s ease;
 }
-.history-title{
-  display:flex;align-items:center;gap:8px;font-size:.9rem;font-weight:600;
-  color:var(--text-sub);margin-bottom:12px;
+.btn-hero-history:hover{border-color:var(--navy);color:var(--navy);background:rgba(59,130,246,.08)}
+.history-dropdown{
+  position:absolute;top:calc(100% + 8px);left:0;right:0;z-index:30;
+  background:var(--card);border:1px solid var(--border);border-radius:14px;
+  box-shadow:0 8px 32px rgba(0,0,0,.5);overflow:hidden;
+  animation:fadeUp .2s ease;max-height:300px;overflow-y:auto;
 }
-.history-list{display:flex;flex-direction:column;gap:8px}
 .history-card{
-  display:flex;justify-content:space-between;align-items:center;
-  padding:14px 16px;border-radius:12px;border:1px solid var(--border);
-  background:rgba(26,31,46,.7);backdrop-filter:blur(8px);
-  cursor:pointer;transition:all .2s ease;text-align:left;
+  display:flex;justify-content:space-between;align-items:center;width:100%;
+  padding:14px 16px;border:none;background:none;
+  cursor:pointer;transition:all .15s ease;text-align:left;
 }
-.history-card:hover{border-color:var(--navy);background:rgba(59,130,246,.06);transform:translateX(4px)}
+.history-card:not(:last-child){border-bottom:1px solid var(--border)}
+.history-card:hover{background:rgba(59,130,246,.08)}
 .history-date{font-size:.88rem;font-weight:600;color:var(--text)}
 .history-meta{font-size:.75rem;color:var(--text-muted)}
+.history-empty{padding:20px;text-align:center}
+.history-empty p{font-size:.88rem;color:var(--text-sub);margin:0}
+.history-empty-sub{font-size:.75rem;color:var(--text-muted);margin-top:6px!important}
 
 .hero-footer{
   position:absolute;bottom:14px;left:0;right:0;text-align:center;

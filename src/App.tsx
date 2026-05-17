@@ -5,6 +5,7 @@ import {
   Newspaper, ShieldCheck, Brain, BookOpen, ChevronRight,
   Rss, Cpu, FileText, Menu, X, TrendingUp,
   Cross, Sparkles, Smartphone, Tablet, Monitor, Home, Zap, Download, Trash2, Clock, Search, RotateCcw, ArrowLeft,
+  Key, Eye, EyeOff, HelpCircle, CheckCircle2,
 } from 'lucide-react';
 import type { Article, AnalysisResult, AppState, CrawlMeta, CachedReport } from './types';
 import { Chart as ChartJS, ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement } from 'chart.js';
@@ -216,6 +217,13 @@ export default function App() {
   const [historyTab, setHistoryTab] = useState<'recent'|'trash'>('recent');
   const [historySort, setHistorySort] = useState<'newest'|'oldest'>('newest');
   const [historySearch, setHistorySearch] = useState('');
+  const [apiKey, setApiKey] = useState<string>(() => {
+    try { return localStorage.getItem('gemini-api-key') || ''; } catch { return ''; }
+  });
+  const [apiKeyInput, setApiKeyInput] = useState('');
+  const [showApiKey, setShowApiKey] = useState(false);
+  const [apiKeyEditMode, setApiKeyEditMode] = useState(false);
+  const [showApiKeyGuide, setShowApiKeyGuide] = useState(false);
   const isStandalone = typeof window !== 'undefined' && (window.matchMedia('(display-mode: standalone)').matches || (window.navigator as any).standalone === true);
   const isIos = typeof navigator !== 'undefined' && /iPhone|iPad|iPod/.test(navigator.userAgent);
   const [modalContent, setModalContent] = useState<{ type: 'issue' | 'category' | 'prediction'; index: number } | null>(null);
@@ -242,6 +250,15 @@ export default function App() {
     return () => window.removeEventListener('beforeinstallprompt', handler);
   }, []);
 
+  // API 키 가이드 모달 ESC 닫기
+  useEffect(() => {
+    if (!showApiKeyGuide) return;
+    document.body.style.overflow = 'hidden';
+    const handleEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') setShowApiKeyGuide(false); };
+    window.addEventListener('keydown', handleEsc);
+    return () => { document.body.style.overflow = ''; window.removeEventListener('keydown', handleEsc); };
+  }, [showApiKeyGuide]);
+
   async function handleInstall() {
     if (installPrompt) {
       installPrompt.prompt();
@@ -261,8 +278,38 @@ export default function App() {
     localStorage.setItem('pwa-install-dismissed', '1');
   }
 
+  function saveApiKey() {
+    const trimmed = apiKeyInput.trim();
+    if (!trimmed) { flash('키를 입력해 주세요'); return; }
+    if (!trimmed.startsWith('AIza') || trimmed.length < 35) {
+      flash('Gemini API 키 형식이 올바르지 않습니다 (AIza로 시작)');
+      return;
+    }
+    try { localStorage.setItem('gemini-api-key', trimmed); } catch { flash('저장에 실패했습니다'); return; }
+    setApiKey(trimmed);
+    setApiKeyInput('');
+    setApiKeyEditMode(false);
+    setShowApiKey(false);
+    flash('✓ API 키가 저장되었습니다');
+  }
+
+  function deleteApiKey() {
+    try { localStorage.removeItem('gemini-api-key'); } catch {}
+    setApiKey('');
+    setApiKeyInput('');
+    setApiKeyEditMode(false);
+    setShowApiKey(false);
+    flash('API 키가 삭제되었습니다');
+  }
+
+  function maskApiKey(key: string): string {
+    if (!key || key.length < 12) return key;
+    return key.slice(0, 6) + '••••••••' + key.slice(-4);
+  }
+
   const canGo = state === 'idle' || state === 'done' || state === 'error';
-  const disabled = !canGo || cooldown;
+  const disabled = !canGo || cooldown || !apiKey;
+  const disabledReason = !apiKey ? 'API 키를 먼저 입력하세요' : (cooldown ? '잠시 후 다시 시도하세요' : '');
   const canShare = typeof navigator !== 'undefined' && !!navigator.share;
   const isPhone = deviceMode === 'phone';
 
@@ -408,8 +455,20 @@ export default function App() {
       setState('analyzing');
 
       const dateLabel = dates.length === 1 ? dates[0] : `${dates[0]}~${dates[dates.length - 1]}`;
-      const r2 = await fetch('/api/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ articles: finalArticles, date: dateLabel }), signal: ac.signal });
-      if (!r2.ok) { const e = await r2.json().catch(() => ({})); throw new Error(e.error || '분석에 실패했습니다.'); }
+      const r2 = await fetch('/api/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ articles: finalArticles, date: dateLabel, apiKey }), signal: ac.signal });
+      if (!r2.ok) {
+        const e = await r2.json().catch(() => ({}));
+        // 키 관련 에러: 카드 자동 펼치고 입력 유도
+        if (e.code === 'INVALID_API_KEY' || e.code === 'PERMISSION_DENIED' || e.code === 'NO_API_KEY' || e.code === 'INVALID_API_KEY_FORMAT') {
+          setApiKeyEditMode(true);
+          setApiKeyInput('');
+          setView('landing');
+          setState('idle');
+          flash(e.error || '키를 다시 확인해 주세요');
+          return;
+        }
+        throw new Error(e.error || '분석에 실패했습니다.');
+      }
       const d2: AnalysisResult = await r2.json();
       setAnalysis(d2);
       // 캐시 저장 (단일 날짜만)
@@ -957,6 +1016,76 @@ export default function App() {
               </h1>
               <p className="hero-sub">매일의 기독교 뉴스를 AI가 자동 수집·분석하고<br />개혁신학 관점의 기도문을 작성해 드립니다</p>
 
+              {/* ── API 키 안내 배지 (키 미설정 시에만) ── */}
+              {!apiKey && (
+                <div className="apikey-hint">
+                  <span className="apikey-hint-wave" aria-hidden="true">👋</span>
+                  <span className="apikey-hint-text">
+                    시작하려면 먼저 <strong>Gemini API 키</strong>를 입력해 주세요
+                  </span>
+                </div>
+              )}
+
+              {/* ── API 키 입력 카드 ── */}
+              {(!apiKey || apiKeyEditMode) ? (
+                <div className="apikey-card apikey-card--empty">
+                  <div className="apikey-card-head">
+                    <span className="apikey-card-label">
+                      <Key size={16} /> Gemini API 키 입력
+                    </span>
+                    <button type="button" className="apikey-guide-btn" onClick={() => setShowApiKeyGuide(true)}>
+                      <HelpCircle size={14} /> 발급 방법
+                    </button>
+                  </div>
+                  <div className="apikey-input-row">
+                    <div className="apikey-input-wrap">
+                      <input
+                        type={showApiKey ? 'text' : 'password'}
+                        value={apiKeyInput}
+                        onChange={e => setApiKeyInput(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') saveApiKey(); }}
+                        placeholder="AIza..."
+                        className="apikey-input"
+                        autoComplete="off"
+                        spellCheck={false}
+                      />
+                      <button
+                        type="button"
+                        className="apikey-eye-btn"
+                        onClick={() => setShowApiKey(!showApiKey)}
+                        aria-label={showApiKey ? '키 숨기기' : '키 보기'}
+                      >
+                        {showApiKey ? <EyeOff size={16} /> : <Eye size={16} />}
+                      </button>
+                    </div>
+                    <button type="button" className="apikey-save-btn" onClick={saveApiKey}>
+                      저장
+                    </button>
+                    {apiKeyEditMode && (
+                      <button type="button" className="apikey-cancel-btn" onClick={() => { setApiKeyEditMode(false); setApiKeyInput(''); }}>
+                        취소
+                      </button>
+                    )}
+                  </div>
+                  <p className="apikey-card-note">
+                    <ShieldCheck size={12} /> 키는 본인 브라우저에만 저장됩니다 · 서버 저장 X
+                  </p>
+                </div>
+              ) : (
+                <div className="apikey-card apikey-card--set">
+                  <span className="apikey-set-label">
+                    <CheckCircle2 size={14} /> Gemini 키 설정됨
+                  </span>
+                  <code className="apikey-set-masked">{maskApiKey(apiKey)}</code>
+                  <button type="button" className="apikey-set-btn" onClick={() => { setApiKeyEditMode(true); setApiKeyInput(''); }}>
+                    변경
+                  </button>
+                  <button type="button" className="apikey-set-btn apikey-set-btn--danger" onClick={deleteApiKey}>
+                    삭제
+                  </button>
+                </div>
+              )}
+
               <div className="hero-actions">
                 {/* 날짜 모드 토글 */}
                 <div className="date-mode-toggle">
@@ -991,7 +1120,7 @@ export default function App() {
                   </div>
                 )}
 
-                <button className="btn-hero-primary" onClick={() => analyze()} disabled={disabled}>
+                <button className="btn-hero-primary" onClick={() => analyze()} disabled={disabled} title={disabledReason || undefined}>
                   <Newspaper size={20} /> {dateMode === 'single' ? '뉴스 분석 시작' : `${getDateList().length}일간 뉴스 분석`}
                 </button>
                 <button className="btn-hero-secondary" onClick={enterDemo}>
@@ -1064,6 +1193,99 @@ export default function App() {
                     </div>
                   </div>
                   <button className="ios-guide-close" onClick={() => setShowIosGuide(false)}>확인</button>
+                </div>
+              </div>
+            )}
+
+            {/* API 키 발급 가이드 모달 */}
+            {showApiKeyGuide && (
+              <div className="apikey-guide-overlay" onClick={() => setShowApiKeyGuide(false)}>
+                <div className="apikey-guide-modal" onClick={e => e.stopPropagation()} role="dialog" aria-labelledby="apikey-guide-title">
+                  <button className="apikey-guide-close-x" onClick={() => setShowApiKeyGuide(false)} aria-label="닫기">
+                    <X size={18} />
+                  </button>
+                  <div className="apikey-guide-head">
+                    <div className="apikey-guide-icon">
+                      <Key size={26} />
+                    </div>
+                    <h3 id="apikey-guide-title" className="apikey-guide-title">Gemini API 키 발급 방법</h3>
+                    <p className="apikey-guide-sub">Google 계정만 있으면 누구나 무료로 발급받을 수 있습니다</p>
+                  </div>
+
+                  <div className="apikey-guide-steps">
+                    <div className="apikey-guide-step">
+                      <span className="apikey-guide-num">1</span>
+                      <div className="apikey-guide-step-body">
+                        <div className="apikey-guide-step-title">Google AI Studio 접속</div>
+                        <div className="apikey-guide-step-desc">
+                          아래 버튼을 눌러 새 탭에서 Google AI Studio를 엽니다.
+                        </div>
+                        <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" className="apikey-guide-link-btn">
+                          <ExternalLink size={14} /> Google AI Studio 열기
+                        </a>
+                      </div>
+                    </div>
+
+                    <div className="apikey-guide-step">
+                      <span className="apikey-guide-num">2</span>
+                      <div className="apikey-guide-step-body">
+                        <div className="apikey-guide-step-title">Google 계정으로 로그인</div>
+                        <div className="apikey-guide-step-desc">
+                          평소 사용하시는 Google(Gmail) 계정으로 로그인하세요.
+                          이미 로그인되어 있으면 이 단계는 건너뜁니다.
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="apikey-guide-step">
+                      <span className="apikey-guide-num">3</span>
+                      <div className="apikey-guide-step-body">
+                        <div className="apikey-guide-step-title">"Create API key" 버튼 클릭</div>
+                        <div className="apikey-guide-step-desc">
+                          화면 우측 상단의 파란색 <strong>"Create API key"</strong> 버튼을 누른 뒤,
+                          <strong>"Create API key in new project"</strong>를 선택합니다.
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="apikey-guide-step">
+                      <span className="apikey-guide-num">4</span>
+                      <div className="apikey-guide-step-body">
+                        <div className="apikey-guide-step-title">생성된 키 복사</div>
+                        <div className="apikey-guide-step-desc">
+                          <code className="apikey-guide-code">AIza</code>로 시작하는 39자리 키가 생성됩니다.
+                          오른쪽 복사 아이콘을 눌러 복사하세요.
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="apikey-guide-step">
+                      <span className="apikey-guide-num">5</span>
+                      <div className="apikey-guide-step-body">
+                        <div className="apikey-guide-step-title">이 페이지에 붙여넣고 저장</div>
+                        <div className="apikey-guide-step-desc">
+                          이 모달을 닫고 위쪽 입력란에 <strong>붙여넣기(Ctrl+V)</strong> 한 뒤
+                          <strong>"저장"</strong> 버튼을 누르면 끝납니다.
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="apikey-guide-footnote">
+                    <div className="apikey-guide-fact">
+                      <Sparkles size={14} /> <strong>무료</strong> · 일 1,500회 · 분당 15회
+                    </div>
+                    <div className="apikey-guide-fact">
+                      <ShieldCheck size={14} /> 키는 <strong>본인 브라우저에만</strong> 저장됩니다
+                    </div>
+                  </div>
+
+                  <div className="apikey-guide-actions">
+                    <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" className="apikey-guide-primary">
+                      <ExternalLink size={16} /> Google AI Studio 바로가기
+                    </a>
+                    <button type="button" className="apikey-guide-close" onClick={() => setShowApiKeyGuide(false)}>닫기</button>
+                  </div>
                 </div>
               </div>
             )}
@@ -2336,4 +2558,288 @@ const GLOBAL_CSS = `
 .detail-nav-btn:hover:not(:disabled){border-color:var(--navy);color:var(--navy);background:rgba(59,130,246,.05)}
 .detail-nav-btn:disabled{opacity:.2;cursor:not-allowed}
 .detail-nav-pos{font-size:.78rem;color:var(--text-muted);font-weight:500}
+
+/* ══════════════════════════════
+   API KEY HINT BADGE (안내 배지)
+   ══════════════════════════════ */
+@keyframes apikeyHintFloat{
+  0%,100%{transform:translateY(0)}
+  50%{transform:translateY(-3px)}
+}
+@keyframes apikeyHintWave{
+  0%,100%{transform:rotate(0deg)}
+  20%{transform:rotate(-14deg)}
+  40%{transform:rotate(12deg)}
+  60%{transform:rotate(-8deg)}
+  80%{transform:rotate(6deg)}
+}
+.apikey-hint{
+  display:inline-flex;align-items:center;gap:9px;
+  margin:0 auto 14px;padding:8px 18px;
+  background:linear-gradient(135deg,rgba(96,165,250,.12),rgba(168,85,247,.08));
+  border:1px solid rgba(96,165,250,.28);
+  border-radius:24px;
+  font-size:.82rem;color:rgba(220,232,255,.85);
+  backdrop-filter:blur(8px);
+  box-shadow:0 4px 18px rgba(59,130,246,.12),inset 0 1px 0 rgba(255,255,255,.06);
+  animation:fadeUp .8s ease .25s both,apikeyHintFloat 3.2s ease-in-out infinite 1s;
+  max-width:fit-content;
+}
+.apikey-hint-wave{
+  display:inline-block;font-size:1.05rem;
+  transform-origin:70% 70%;
+  animation:apikeyHintWave 2.4s ease-in-out infinite;
+}
+.apikey-hint-text strong{
+  color:#fcd34d;font-weight:800;
+  text-shadow:0 0 12px rgba(252,211,77,.35);
+}
+
+/* ══════════════════════════════
+   API KEY CARD (Landing Hero)
+   ══════════════════════════════ */
+.apikey-card{
+  width:100%;max-width:360px;margin:0 auto 18px;
+  animation:fadeUp .8s ease .35s both;
+  background:linear-gradient(135deg,rgba(212,160,23,.07),rgba(30,64,175,.06));
+  border:1.5px solid rgba(212,160,23,.25);
+  border-radius:var(--radius);
+  padding:14px 16px 12px;
+  backdrop-filter:blur(10px);
+  box-shadow:0 0 24px rgba(212,160,23,.08),inset 0 0 18px rgba(212,160,23,.03);
+  position:relative;
+}
+.apikey-card--empty::before{
+  content:'';position:absolute;inset:-1.5px;border-radius:var(--radius);padding:1.5px;
+  background:linear-gradient(135deg,rgba(212,160,23,.5),rgba(59,130,246,.3),rgba(212,160,23,.5));
+  background-size:200% 200%;animation:gradientShift 6s ease infinite;
+  -webkit-mask:linear-gradient(#fff 0 0) content-box,linear-gradient(#fff 0 0);
+  -webkit-mask-composite:xor;mask-composite:exclude;pointer-events:none;
+}
+.apikey-card-head{
+  display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;
+}
+.apikey-card-label{
+  display:inline-flex;align-items:center;gap:6px;
+  font-size:.82rem;font-weight:700;color:#fcd34d;letter-spacing:.3px;
+}
+.apikey-guide-btn{
+  display:inline-flex;align-items:center;gap:4px;
+  background:rgba(96,165,250,.1);border:1px solid rgba(96,165,250,.25);
+  border-radius:14px;padding:4px 10px;
+  font-size:.72rem;font-weight:600;color:#93c5fd;cursor:pointer;
+  transition:all var(--transition);
+}
+.apikey-guide-btn:hover{background:rgba(96,165,250,.18);border-color:rgba(96,165,250,.5);color:#dbeafe}
+
+.apikey-input-row{display:flex;gap:6px;align-items:stretch}
+.apikey-input-wrap{
+  flex:1;position:relative;display:flex;align-items:center;
+  background:rgba(0,0,0,.25);border:1px solid rgba(212,160,23,.2);
+  border-radius:var(--radius-sm);transition:border-color var(--transition),box-shadow var(--transition);
+}
+.apikey-input-wrap:focus-within{
+  border-color:rgba(212,160,23,.55);
+  box-shadow:0 0 0 3px rgba(212,160,23,.1);
+}
+.apikey-input{
+  flex:1;background:none;border:none;outline:none;
+  padding:10px 4px 10px 12px;font-size:.88rem;color:#fff;
+  font-family:'SF Mono','Consolas',monospace;letter-spacing:.5px;
+  min-width:0;
+}
+.apikey-input::placeholder{color:rgba(255,255,255,.25);font-family:var(--font);letter-spacing:0}
+.apikey-eye-btn{
+  background:none;border:none;cursor:pointer;
+  padding:0 10px;color:rgba(255,255,255,.4);
+  display:flex;align-items:center;transition:color var(--transition);
+}
+.apikey-eye-btn:hover{color:#fcd34d}
+
+.apikey-save-btn{
+  padding:0 16px;border-radius:var(--radius-sm);cursor:pointer;
+  background:linear-gradient(135deg,#d4a017,#b8860b);
+  color:#0f1117;border:none;font-weight:800;font-size:.85rem;letter-spacing:.5px;
+  box-shadow:0 2px 12px rgba(212,160,23,.35);
+  transition:all var(--transition);white-space:nowrap;
+}
+.apikey-save-btn:hover{transform:translateY(-1px);box-shadow:0 4px 18px rgba(212,160,23,.55);filter:brightness(1.08)}
+.apikey-save-btn:active{transform:translateY(0)}
+
+.apikey-cancel-btn{
+  padding:0 12px;border-radius:var(--radius-sm);cursor:pointer;
+  background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);
+  color:rgba(255,255,255,.7);font-size:.82rem;font-weight:600;
+  transition:all var(--transition);white-space:nowrap;
+}
+.apikey-cancel-btn:hover{background:rgba(255,255,255,.1);color:#fff}
+
+.apikey-card-note{
+  margin-top:10px;display:flex;align-items:center;gap:5px;
+  font-size:.7rem;color:rgba(186,200,220,.55);
+}
+.apikey-card-note svg{color:rgba(104,211,145,.7)}
+
+/* 키 설정됨 (접힌 모드) */
+.apikey-card--set{
+  display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+  padding:9px 14px;
+  background:linear-gradient(135deg,rgba(104,211,145,.06),rgba(30,64,175,.04));
+  border:1px solid rgba(104,211,145,.22);
+  box-shadow:none;
+}
+.apikey-card--set::before{display:none}
+.apikey-set-label{
+  display:inline-flex;align-items:center;gap:5px;
+  font-size:.78rem;font-weight:700;color:#68d391;
+}
+.apikey-set-masked{
+  flex:1;min-width:0;
+  font-family:'SF Mono','Consolas',monospace;font-size:.72rem;
+  color:rgba(255,255,255,.55);letter-spacing:.5px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  padding:2px 0;
+}
+.apikey-set-btn{
+  padding:5px 12px;border-radius:8px;cursor:pointer;
+  background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);
+  color:rgba(255,255,255,.75);font-size:.72rem;font-weight:600;
+  transition:all .15s;
+}
+.apikey-set-btn:hover{background:rgba(255,255,255,.12);color:#fff;border-color:rgba(255,255,255,.25)}
+.apikey-set-btn--danger:hover{background:rgba(252,129,129,.15);color:#fc8181;border-color:rgba(252,129,129,.4)}
+
+/* ══════════════════════════════
+   API KEY GUIDE MODAL
+   ══════════════════════════════ */
+.apikey-guide-overlay{
+  position:fixed;inset:0;z-index:1000;
+  background:rgba(6,10,20,.78);backdrop-filter:blur(8px);
+  display:flex;align-items:center;justify-content:center;
+  padding:20px;animation:fadeIn .2s ease;
+  overflow-y:auto;
+}
+.apikey-guide-modal{
+  width:100%;max-width:560px;max-height:calc(100vh - 40px);
+  background:linear-gradient(180deg,#0d1832 0%,#0a1228 100%);
+  border:1.5px solid rgba(212,160,23,.3);
+  border-radius:var(--radius-xl);
+  box-shadow:0 24px 80px rgba(0,0,0,.6),0 0 60px rgba(212,160,23,.1);
+  padding:28px 26px 22px;
+  position:relative;overflow-y:auto;
+  animation:fadeUp .3s cubic-bezier(.4,0,.2,1) both;
+  color:var(--text);
+}
+.apikey-guide-close-x{
+  position:absolute;top:14px;right:14px;
+  width:32px;height:32px;border-radius:50%;border:none;cursor:pointer;
+  background:rgba(255,255,255,.05);color:rgba(255,255,255,.5);
+  display:flex;align-items:center;justify-content:center;
+  transition:all .15s;
+}
+.apikey-guide-close-x:hover{background:rgba(255,255,255,.12);color:#fff;transform:rotate(90deg)}
+
+.apikey-guide-head{text-align:center;margin-bottom:24px}
+.apikey-guide-icon{
+  display:inline-flex;align-items:center;justify-content:center;
+  width:56px;height:56px;border-radius:50%;margin-bottom:12px;
+  background:linear-gradient(135deg,rgba(212,160,23,.2),rgba(212,160,23,.05));
+  border:1.5px solid rgba(212,160,23,.4);
+  color:#fcd34d;
+  box-shadow:0 0 30px rgba(212,160,23,.25);
+}
+.apikey-guide-title{
+  font-size:1.35rem;font-weight:800;color:#fff;margin-bottom:6px;letter-spacing:-.3px;
+}
+.apikey-guide-sub{font-size:.85rem;color:rgba(186,200,220,.7);line-height:1.5}
+
+.apikey-guide-steps{
+  display:flex;flex-direction:column;gap:14px;margin-bottom:22px;
+}
+.apikey-guide-step{
+  display:flex;gap:14px;align-items:flex-start;
+  padding:14px;border-radius:var(--radius);
+  background:rgba(30,64,175,.05);border:1px solid rgba(30,64,175,.12);
+  transition:all var(--transition);
+}
+.apikey-guide-step:hover{border-color:rgba(30,64,175,.28);background:rgba(30,64,175,.08)}
+.apikey-guide-num{
+  flex-shrink:0;
+  width:30px;height:30px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  background:linear-gradient(135deg,#d4a017,#b8860b);
+  color:#0f1117;font-weight:800;font-size:.95rem;
+  box-shadow:0 2px 10px rgba(212,160,23,.4);
+}
+.apikey-guide-step-body{flex:1;min-width:0}
+.apikey-guide-step-title{
+  font-size:.95rem;font-weight:700;color:#fff;margin-bottom:5px;
+}
+.apikey-guide-step-desc{
+  font-size:.82rem;color:rgba(186,200,220,.75);line-height:1.6;
+}
+.apikey-guide-step-desc strong{color:#fcd34d;font-weight:700}
+.apikey-guide-code{
+  display:inline-block;
+  background:rgba(0,0,0,.35);border:1px solid rgba(212,160,23,.25);
+  border-radius:5px;padding:1px 7px;
+  font-family:'SF Mono','Consolas',monospace;font-size:.78rem;
+  color:#fcd34d;
+}
+.apikey-guide-link-btn{
+  display:inline-flex;align-items:center;gap:6px;margin-top:10px;
+  background:rgba(96,165,250,.12);border:1px solid rgba(96,165,250,.3);
+  border-radius:var(--radius-sm);padding:7px 14px;
+  font-size:.78rem;font-weight:600;color:#93c5fd;text-decoration:none;
+  transition:all var(--transition);
+}
+.apikey-guide-link-btn:hover{background:rgba(96,165,250,.22);color:#dbeafe;border-color:rgba(96,165,250,.55);transform:translateY(-1px)}
+
+.apikey-guide-footnote{
+  display:flex;flex-direction:column;gap:8px;
+  padding:14px 16px;margin-bottom:18px;
+  background:rgba(212,160,23,.06);border:1px dashed rgba(212,160,23,.25);
+  border-radius:var(--radius);
+}
+.apikey-guide-fact{
+  display:flex;align-items:center;gap:8px;
+  font-size:.78rem;color:rgba(255,255,255,.75);
+}
+.apikey-guide-fact svg{color:#fcd34d}
+.apikey-guide-fact strong{color:#fff;font-weight:700}
+
+.apikey-guide-actions{display:flex;gap:10px;align-items:stretch}
+.apikey-guide-primary{
+  flex:1;display:flex;align-items:center;justify-content:center;gap:8px;
+  padding:12px 18px;border-radius:var(--radius);
+  background:linear-gradient(135deg,#d4a017,#b8860b);
+  color:#0f1117;font-weight:800;font-size:.92rem;text-decoration:none;
+  box-shadow:0 4px 18px rgba(212,160,23,.4);
+  transition:all var(--transition);
+}
+.apikey-guide-primary:hover{transform:translateY(-2px);box-shadow:0 6px 24px rgba(212,160,23,.55);filter:brightness(1.08)}
+.apikey-guide-close{
+  padding:12px 22px;border-radius:var(--radius);cursor:pointer;
+  background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);
+  color:rgba(255,255,255,.75);font-size:.88rem;font-weight:600;
+  transition:all var(--transition);
+}
+.apikey-guide-close:hover{background:rgba(255,255,255,.12);color:#fff}
+
+/* 모바일 반응형 */
+@media (max-width:480px){
+  .apikey-hint{font-size:.76rem;padding:7px 14px;margin-bottom:10px}
+  .apikey-hint-wave{font-size:.95rem}
+  .apikey-card{max-width:100%;padding:12px 14px 10px}
+  .apikey-input-row{flex-wrap:wrap}
+  .apikey-input-wrap{order:1;width:100%}
+  .apikey-save-btn{order:2;flex:1;padding:10px 12px;min-height:38px}
+  .apikey-cancel-btn{order:3;flex:1;min-height:38px}
+  .apikey-guide-modal{padding:22px 18px 18px}
+  .apikey-guide-title{font-size:1.15rem}
+  .apikey-guide-step{padding:12px;gap:11px}
+  .apikey-guide-num{width:26px;height:26px;font-size:.85rem}
+  .apikey-guide-actions{flex-direction:column-reverse}
+  .apikey-guide-close{padding:10px 18px}
+}
 `;

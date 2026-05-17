@@ -165,18 +165,24 @@ const ANALYSIS_RESPONSE_SCHEMA = {
 
 // ── 에러 메시지 ──
 
-function getGeminiErrorMessage(err: unknown): string {
+function getGeminiErrorMessage(err: unknown): { message: string; code?: string } {
   const msg = err instanceof Error ? err.message : String(err);
+  if (msg.includes('API key expired') || msg.includes('API_KEY_INVALID')) {
+    return { message: 'API 키가 만료되었거나 유효하지 않습니다. 새 키를 발급받아 다시 입력해 주세요.', code: 'INVALID_API_KEY' };
+  }
+  if (msg.includes('PERMISSION_DENIED') || msg.includes('403')) {
+    return { message: 'API 키에 권한이 없습니다. Generative Language API가 활성화되어 있는지 확인하세요.', code: 'PERMISSION_DENIED' };
+  }
   if (msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED')) {
-    return '오늘 AI 분석 횟수가 소진되었습니다. 내일 다시 시도해주세요.';
+    return { message: '오늘 AI 분석 횟수가 소진되었습니다. 내일 다시 시도해주세요.', code: 'QUOTA_EXCEEDED' };
   }
   if (msg.includes('400') || msg.includes('INVALID_ARGUMENT')) {
-    return 'AI 분석 요청에 문제가 발생했습니다. 다시 시도해주세요.';
+    return { message: 'AI 분석 요청에 문제가 발생했습니다. 다시 시도해주세요.', code: 'BAD_REQUEST' };
   }
   if (msg.includes('timeout') || msg.includes('DEADLINE_EXCEEDED')) {
-    return 'AI 분석 시간이 초과되었습니다. 잠시 후 다시 시도해주세요.';
+    return { message: 'AI 분석 시간이 초과되었습니다. 잠시 후 다시 시도해주세요.', code: 'TIMEOUT' };
   }
-  return '분석 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.';
+  return { message: '분석 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.' };
 }
 
 // ── 핸들러 ──
@@ -186,17 +192,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const { articles, date } = req.body as { articles: Article[]; date: string };
+  const { articles, date, apiKey } = req.body as { articles: Article[]; date: string; apiKey?: string };
   if (!articles?.length) {
     return res.status(400).json({ error: '분석할 뉴스가 없습니다' });
   }
 
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    return res.status(500).json({ error: '서버 설정 오류입니다. 관리자에게 문의하세요.' });
+  const userKey = (apiKey || '').trim();
+  if (!userKey) {
+    return res.status(400).json({
+      error: 'Gemini API 키가 필요합니다. 첫 페이지에서 키를 입력해 주세요.',
+      code: 'NO_API_KEY',
+    });
+  }
+  if (!userKey.startsWith('AIza') || userKey.length < 35) {
+    return res.status(400).json({
+      error: 'Gemini API 키 형식이 올바르지 않습니다 (AIza로 시작).',
+      code: 'INVALID_API_KEY_FORMAT',
+    });
   }
 
-  const ai = new GoogleGenAI({ apiKey });
+  const ai = new GoogleGenAI({ apiKey: userKey });
   const prompt = buildAnalysisPrompt(articles, date);
 
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -223,10 +238,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       return res.status(200).json(analysis);
     } catch (err) {
+      const { message, code } = getGeminiErrorMessage(err);
+      // 키 관련 에러는 재시도 의미 없음 — 즉시 반환
+      if (code === 'INVALID_API_KEY' || code === 'PERMISSION_DENIED' || code === 'QUOTA_EXCEEDED') {
+        return res.status(400).json({ error: message, code });
+      }
       if (attempt === 0) continue;
-
-      const errorMessage = getGeminiErrorMessage(err);
-      return res.status(500).json({ error: errorMessage });
+      return res.status(500).json({ error: message, code });
     }
   }
 }
